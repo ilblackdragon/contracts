@@ -1,0 +1,2 @@
+# Library of standard contracts
+
