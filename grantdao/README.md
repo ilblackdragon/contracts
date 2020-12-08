@@ -14,13 +14,9 @@ Spec for v1:
      - Given funds to `receiver` for `description` and proposed `amount`
  - Only council members (or self) can call:
      - vote for a given proposal. If this vote achieves >50% of council members - it executes action on success or removes the proposal.
+ - Upgradability with super majority vote of the council
 
 Potentially, either council with vote can specify what amount they think make sense and then median of that  would be awarded.
-
-We would launch this with 1000 $NEAR to just get a quick market feedback.
-
-We can keep contract upgradable based on council decision as well to allow easily extend it going forward.
-
 
 Target audience for v1: [ToDo]
 
