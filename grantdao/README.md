@@ -36,5 +36,9 @@ Target audience for v1: [ToDo]
 Even better: fork this code and create a more interesting ways to distribute.
 Every guild can fork it and expand how this can be made more inclusive or more sophisticated.
 
+Needs:
+ - Nice frontend to visualize past and present proposals, creation of proposal, payouts, stats, etc.
+ - This needs some form of notification service
+ 
 V2 ideas:
- - Add support for other tokens
+ - Add support for other tokens in the "bank". Proposal can then specify either from whitelisted set of tokens.
