@@ -31,6 +31,12 @@ enum ProposalKind {
     RemoveCouncil,
     Payout {
         amount: WrappedBalance,
+    },
+    ChangeVotePeriod {
+        vote_period: WrappedDuration
+    },
+    ChangeBond {
+        bond: WrappedBalance,
     }
 }
 
@@ -121,6 +127,14 @@ impl GrantDAO {
         self.proposals.len() - 1
     }
 
+    pub fn get_vote_period(&self) -> WrappedDuration {
+        self.vote_period.into()
+    }
+
+    pub fn get_bond(&self) -> WrappedBalance {
+        self.bond.into()
+    }
+
     pub fn get_council(&self) -> Vec<AccountId> {
         self.council.to_vec()
     }
@@ -180,6 +194,12 @@ impl GrantDAO {
                     ProposalKind::Payout { amount } => {
                         Promise::new(target).transfer(amount.0);
                     },
+                    ProposalKind::ChangeVotePeriod { vote_period } => {
+                        self.vote_period = vote_period.into();
+                    },
+                    ProposalKind::ChangeBond { bond } => {
+                        self.bond = bond.into();
+                    }
                 };
             },
             ProposalStatus::Reject => {
