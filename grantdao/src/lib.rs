@@ -1,21 +1,31 @@
-use near_sdk::{AccountId, Balance, env, Promise, near_bindgen, init};
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{UnorderedSet, UnorderedMap};
-use near_lib::types::{Duration};
 use std::collections::HashMap;
+
+use near_lib::types::Duration;
+use near_sdk::{AccountId, Balance, env, near_bindgen, Promise};
+use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::collections::{UnorderedSet, Vector};
+use serde::{Serialize, Deserialize};
 
 #[global_allocator]
 static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc::INIT;
 
 const MAX_DESCRIPTION_LENGTH: usize = 280;
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 enum Vote {
     Yes,
     No
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Eq, PartialEq, Debug, Serialize, Deserialize)]
+enum ProposalStatus {
+    Vote,
+    Success,
+    Reject,
+    Fail,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 enum ProposalKind {
     NewCouncil,
     RemoveCouncil,
@@ -24,8 +34,9 @@ enum ProposalKind {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 struct Proposal {
+    status: ProposalStatus,
     proposer: AccountId,
     target: AccountId,
     description: String,
@@ -36,6 +47,23 @@ struct Proposal {
     votes: HashMap<AccountId, Vote>,
 }
 
+impl Proposal {
+    /// Compute new vote status given council size and current timestamp.
+    pub fn vote_status(&self, num_council: u64) -> ProposalStatus {
+        let majority = num_council / 2;
+        if self.vote_yes > majority {
+            ProposalStatus::Success
+        } else if self.vote_no > majority {
+            ProposalStatus::Reject
+        } else if env::block_timestamp() > self.vote_period_end {
+            ProposalStatus::Fail
+        } else {
+            ProposalStatus::Vote
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct ProposalInput {
     target: AccountId,
     description: String,
@@ -48,10 +76,16 @@ struct GrantDAO {
     bond: Balance,
     vote_period: Duration,
     council: UnorderedSet<AccountId>,
-    proposals: UnorderedMap<u64, Proposal>,
-    last_proposal_id: u64,
+    proposals: Vector<Proposal>,
 }
 
+impl Default for GrantDAO {
+    fn default() -> Self {
+        env::panic(b"GrantDAO should be initialized before usage")
+    }
+}
+
+#[near_bindgen]
 impl GrantDAO {
     #[init]
     pub fn new(council: Vec<AccountId>, bond: Balance, vote_period: Duration) -> Self {
@@ -59,8 +93,7 @@ impl GrantDAO {
             bond,
             vote_period,
             council: UnorderedSet::new(b"c".to_vec()),
-            proposals: UnorderedMap::new(b"p".to_vec()),
-            last_proposal_id: 0
+            proposals: Vector::new(b"p".to_vec()),
         };
         for account_id in council {
             dao.council.insert(&account_id);
@@ -68,12 +101,12 @@ impl GrantDAO {
         dao
     }
 
-    // #[payable]
     pub fn add_proposal(&mut self, proposal: ProposalInput) -> u64 {
         // TOOD: add also extra storage cost for the proposal itself.
         assert!(env::attached_deposit() >= self.bond, "Not enough deposit");
         assert!(proposal.description.len() < MAX_DESCRIPTION_LENGTH, "Description length is too long");
         let p = Proposal {
+            status: ProposalStatus::Vote,
             proposer: env::predecessor_account_id(),
             target: proposal.target,
             description: proposal.description,
@@ -83,29 +116,35 @@ impl GrantDAO {
             vote_no: 0,
             votes: HashMap::default(),
         };
-        self.proposals.insert(&self.last_proposal_id, &p);
-        self.last_proposal_id += 1;
-        self.last_proposal_id - 1
+        self.proposals.push(&p);
+        self.proposals.len() - 1
     }
 
     pub fn get_council(&self) -> Vec<AccountId> {
         self.council.to_vec()
     }
 
-    pub fn get_proposals(&self) -> Vec<(u64, Proposal)> {
-        self.proposals.to_vec()
+    pub fn get_num_proposals(&self) -> u64 {
+        self.proposals.len()
+    }
+
+    pub fn get_proposals(&self, from_index: u64, limit: u64) -> Vec<Proposal> {
+        (from_index..std::cmp::min(from_index + limit, self.proposals.len()))
+            .map(|index| self.proposals.get(index).unwrap())
+            .collect()
     }
 
     pub fn get_proposal(&self, id: u64) -> Proposal {
-        self.proposals.get(&id).expect("Proposal not found")
+        self.proposals.get(id).expect("Proposal not found")
     }
 
     pub fn vote(&mut self, id: u64, vote: Vote) {
         assert!(self.council.contains(&env::predecessor_account_id()), "Only council can vote");
-        let mut proposal = self.proposals.get(&id).expect("No proposal with such id");
+        let mut proposal = self.proposals.get(id).expect("No proposal with such id");
+        assert!(proposal.status == ProposalStatus::Vote, "Proposal already finalized");
         if proposal.vote_period_end < env::block_timestamp() {
             env::log(b"Voting period expired, finalizing the proposal");
-            let _ = self.finalize(id);
+            self.finalize(id);
             return;
         }
         assert!(!proposal.votes.contains_key(&env::predecessor_account_id()), "Already voted");
@@ -114,61 +153,76 @@ impl GrantDAO {
             Vote::No => proposal.vote_no += 1,
         }
         proposal.votes.insert(env::predecessor_account_id(), vote);
-        self.proposals.insert(&id, &proposal);
+        self.proposals.replace(id, &proposal);
+        // Finalize if this vote has achieved majority.
+        if proposal.vote_status(self.council.len()) != ProposalStatus::Vote {
+            self.finalize(id);
+        }
     }
 
     pub fn finalize(&mut self, id: u64) {
-        let proposal = self.proposals.get(&id).expect("No proposal with such id");
-        assert!(proposal.vote_period_end < env::block_timestamp(), "Voting period has not expired");
-        self.proposals.remove(&id);
-        if proposal.vote_yes > proposal.vote_no {
-            env::log(b"Vote succeeded");
-            Promise::new(proposal.proposer).transfer(self.bond);
-            match proposal.kind {
-                ProposalKind::NewCouncil => {
-                    self.council.insert(&proposal.target);
-                },
-                ProposalKind::RemoveCouncil => {
-                    self.council.remove(&proposal.target);
-                },
-                ProposalKind::Payout { amount } => {
-                    Promise::new(proposal.target).transfer(amount);
-                },
-            };
-        } else if proposal.vote_no == 0 && proposal.vote_yes == 0 {
-            // If no-one voted, let's return the bond.
-            env::log(b"No vote");
-            Promise::new(proposal.proposer).transfer(self.bond);
-        } else {
-            env::log(b"Vote failed");
+        let mut proposal = self.proposals.get(id).expect("No proposal with such id");
+        assert!(proposal.status == ProposalStatus::Vote, "Proposal already finalized");
+        proposal.status = proposal.vote_status(self.council.len());
+        match proposal.status {
+            ProposalStatus::Success => {
+                env::log(b"Vote succeeded");
+                let target = proposal.target.clone();
+                Promise::new(proposal.proposer.clone()).transfer(self.bond);
+                match proposal.kind {
+                    ProposalKind::NewCouncil => {
+                        self.council.insert(&target);
+                    },
+                    ProposalKind::RemoveCouncil => {
+                        self.council.remove(&target);
+                    },
+                    ProposalKind::Payout { amount } => {
+                        Promise::new(target).transfer(amount);
+                    },
+                };
+            },
+            ProposalStatus::Reject => {
+                env::log(b"Proposal rejected");
+            }
+            ProposalStatus::Fail => {
+                // If no majority vote, let's return the bond.
+                env::log(b"Proposal vote failed");
+                Promise::new(proposal.proposer.clone()).transfer(self.bond);
+            }
+            ProposalStatus::Vote => env::panic(b"voting period has not expired and no majority vote yet")
         }
+        self.proposals.replace(id, &proposal);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use near_lib::context::{accounts, VMContextBuilder};
     use near_sdk::{MockedBlockchain, testing_env};
+
+    use super::*;
 
     #[test]
     fn test_basics() {
         testing_env!(VMContextBuilder::new().finish());
         let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10, 1_000);
+
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "add new member".to_string(),
             kind: ProposalKind::NewCouncil
         });
-        assert_eq!(dao.get_proposals().len(), 1);
+        assert_eq!(dao.get_num_proposals(), 1);
+        assert_eq!(dao.get_proposals(0, 1).len(), 1);
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
         dao.vote(id, Vote::Yes);
         assert_eq!(dao.get_proposal(id).vote_yes, 1);
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).block_timestamp(1_001).finish());
-        dao.finalize(id);
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(1)).finish());
+        dao.vote(id, Vote::Yes);
         assert_eq!(dao.get_council(), vec![accounts(0), accounts(1), accounts(2)]);
+
+        // Pay out money for proposal. 2 votes yes vs 1 vote no.
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
@@ -179,8 +233,20 @@ mod tests {
         dao.vote(id, Vote::No);
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(1)).finish());
         dao.vote(id, Vote::Yes);
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).block_timestamp(1_001).finish());
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).finish());
+        dao.vote(id, Vote::Yes);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
+
+        // No vote for proposal.
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(2),
+            description: "give me more money".to_string(),
+            kind: ProposalKind::Payout { amount: 10 },
+        });
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(3)).block_timestamp(1_001).finish());
         dao.finalize(id);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Fail);
     }
 
     #[test]
@@ -194,7 +260,7 @@ mod tests {
             description: "add new member".to_string(),
             kind: ProposalKind::NewCouncil
         });
-        assert_eq!(dao.get_proposals().len(), 1);
+        assert_eq!(dao.get_proposals(0, 1).len(), 1);
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
         dao.vote(id, Vote::Yes);
         dao.vote(id, Vote::Yes);

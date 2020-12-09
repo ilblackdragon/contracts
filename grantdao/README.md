@@ -11,9 +11,16 @@ Spec for v1:
  - Next methods are available that can be called by anyone who attaches `bond` $NEAR (to prevent spam):
      - Add new council member
      - Remove council member
-     - Given funds to `receiver` for `description` and proposed `amount`
+     - Given funds to `receiver` for `description` (up to 280 characters) and proposed `amount`
+     - Finalize proposal
+        When proposal has passed the require time, anyone can call to finalize it.
+        If there is over 50% of council members voted "YES", proposal passes. Bond is returned to submitter and the action is executed.
+        If over 50% voted "NO", proposal gets refused and bond kept.
+        Otherwise (if not majority achieved): proposal fails and bond gets returned.
  - Only council members (or self) can call:
-     - vote for a given proposal. If this vote achieves >50% of council members - it executes action on success or removes the proposal.
+     - `vote` for a given proposal.
+ - ``Finalize proposal can be called 
+        - If this vote achieves >50% of council members saying "YES" - it executes action on success.
  - Upgradability with super majority vote of the council
 
 Potentially, either council with vote can specify what amount they think make sense and then median of that  would be awarded.
@@ -28,3 +35,6 @@ Target audience for v1: [ToDo]
 
 Even better: fork this code and create a more interesting ways to distribute.
 Every guild can fork it and expand how this can be made more inclusive or more sophisticated.
+
+V2 ideas:
+ - Add support for other tokens

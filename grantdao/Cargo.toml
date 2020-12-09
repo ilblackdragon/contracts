@@ -1,5 +1,5 @@
 [package]
-name = "token-curated-registry"
+name = "grantdao"
 version = "0.1.0"
 authors = ["Illia Polosukhin <illia.polosukhin@gmail.com>"]
 edition = "2018"
@@ -20,3 +20,4 @@ overflow-checks = true
 [dependencies]
 near-sdk = "2.0.0"
 near-lib = { path = "../near-lib-rs" }
+serde = { version = "*", features = ["derive"] }
