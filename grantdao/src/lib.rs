@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use near_lib::types::Duration;
+use near_lib::types::{WrappedDuration, Duration, WrappedBalance};
 use near_sdk::{AccountId, Balance, env, near_bindgen, Promise};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedSet, Vector};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[global_allocator]
 static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc::INIT;
@@ -30,7 +30,7 @@ enum ProposalKind {
     NewCouncil,
     RemoveCouncil,
     Payout {
-        amount: Balance,
+        amount: WrappedBalance,
     }
 }
 
@@ -88,10 +88,10 @@ impl Default for GrantDAO {
 #[near_bindgen]
 impl GrantDAO {
     #[init]
-    pub fn new(council: Vec<AccountId>, bond: Balance, vote_period: Duration) -> Self {
+    pub fn new(council: Vec<AccountId>, bond: WrappedBalance, vote_period: WrappedDuration) -> Self {
         let mut dao = Self {
-            bond,
-            vote_period,
+            bond: bond.into(),
+            vote_period: vote_period.into(),
             council: UnorderedSet::new(b"c".to_vec()),
             proposals: Vector::new(b"p".to_vec()),
         };
@@ -101,6 +101,7 @@ impl GrantDAO {
         dao
     }
 
+    #[payable]
     pub fn add_proposal(&mut self, proposal: ProposalInput) -> u64 {
         // TOOD: add also extra storage cost for the proposal itself.
         assert!(env::attached_deposit() >= self.bond, "Not enough deposit");
@@ -177,7 +178,7 @@ impl GrantDAO {
                         self.council.remove(&target);
                     },
                     ProposalKind::Payout { amount } => {
-                        Promise::new(target).transfer(amount);
+                        Promise::new(target).transfer(amount.0);
                     },
                 };
             },
@@ -205,7 +206,7 @@ mod tests {
     #[test]
     fn test_basics() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10, 1_000);
+        let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1_000.into());
 
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
@@ -227,7 +228,7 @@ mod tests {
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "give me money".to_string(),
-            kind: ProposalKind::Payout { amount: 10 },
+            kind: ProposalKind::Payout { amount: 10.into() },
         });
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
         dao.vote(id, Vote::No);
@@ -242,7 +243,7 @@ mod tests {
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "give me more money".to_string(),
-            kind: ProposalKind::Payout { amount: 10 },
+            kind: ProposalKind::Payout { amount: 10.into() },
         });
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(3)).block_timestamp(1_001).finish());
         dao.finalize(id);
@@ -253,7 +254,7 @@ mod tests {
     #[should_panic]
     fn test_double_vote() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10, 1_000);
+        let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1000.into());
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),

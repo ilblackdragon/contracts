@@ -42,3 +42,29 @@ Needs:
  
 V2 ideas:
  - Add support for other tokens in the "bank". Proposal can then specify either from whitelisted set of tokens.
+
+# Development
+
+## Deploy to TestNet
+
+```bash
+> near dev-deploy res/grandao.wasm
+> near call dev-1607495280084-9068895 new '{"council": ["testmewell.testnet", "illia"], "bond": "1000000000000000000000000", "vote_period": "1800000000000"}' --accountId dev-1607495280084-9068895
+> near view dev-1607495280084-9068895 get_num_proposals
+> near call dev-1607495280084-9068895 add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"Payout": { "amount": "1000000000000000000000000"}}}}' --accountId=illia --amount 1
+> near view dev-1607495280084-9068895 get_proposal '{"id": 0}'
+{
+  status: 'Vote',
+  proposer: 'illia',
+  target: 'illia',
+  description: 'test',
+  kind: { Payout: { amount: '1000000000000000000000000' } },
+  vote_period_end: 1607497778113967900,
+  vote_yes: 0,
+  vote_no: 0,
+  votes: {}
+}
+
+> near view dev-1607495280084-9068895 get_proposals '{"from_index": 0, "limit": 1}'
+> near call dev-1607495280084-9068895 vote '{"id": 0, "vote": "Yes"}' --accountId illia
+```
