@@ -228,6 +228,9 @@ mod tests {
         testing_env!(VMContextBuilder::new().finish());
         let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1_000.into());
 
+        assert_eq!(dao.get_bond(), 10.into());
+        assert_eq!(dao.get_vote_period(), 1_000.into());
+
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
@@ -268,6 +271,23 @@ mod tests {
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(3)).block_timestamp(1_001).finish());
         dao.finalize(id);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Fail);
+    }
+
+    #[test]
+    fn test_single_council() {
+        testing_env!(VMContextBuilder::new().finish());
+        let mut dao = GrantDAO::new(vec![accounts(0)], 10.into(), 1_000.into());
+
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(1),
+            description: "add new member".to_string(),
+            kind: ProposalKind::NewCouncil
+        });
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
+        dao.vote(id, Vote::Yes);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
+        assert_eq!(dao.get_council(), vec![accounts(0), accounts(1)]);
     }
 
     #[test]
