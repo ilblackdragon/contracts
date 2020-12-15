@@ -17,11 +17,26 @@ enum Vote {
     No
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+enum NumOrRatio {
+    Number(u64),
+    Ratio(u64, u64),
+}
+
 /// Policy item, defining how many votes required to approve up to this much amount.
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 struct PolicyItem {
     pub max_amount: WrappedBalance,
-    pub num_votes: u64,
+    pub votes: NumOrRatio,
+}
+
+impl PolicyItem {
+    pub fn num_votes(&self, num_council: u64) -> u64 {
+        match self.votes {
+            NumOrRatio::Number(num_votes) => num_votes,
+            NumOrRatio::Ratio(l, r) => std::cmp::min(num_council * l / r + 1, num_council),
+        }
+    }
 }
 
 fn vote_requirement(policy: &[PolicyItem], num_council: u64, amount: Option<Balance>) -> u64 {
@@ -29,11 +44,11 @@ fn vote_requirement(policy: &[PolicyItem], num_council: u64, amount: Option<Bala
         // TODO: replace with binary search.
         for item in policy {
             if item.max_amount.0 > amount {
-                return item.num_votes
+                return item.num_votes(num_council)
             }
         }
     }
-    num_council / 2 + 1
+    policy[policy.len() - 1].num_votes(num_council)
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Eq, PartialEq, Debug, Serialize, Deserialize, Clone)]
@@ -85,12 +100,12 @@ impl Proposal {
     /// Compute new vote status given council size and current timestamp.
     pub fn vote_status(&self, policy: &[PolicyItem], num_council: u64) -> ProposalStatus {
         let votes_required = vote_requirement(policy, num_council, self.get_amount());
-        let majority = num_council / 2 + 1;
-        if self.vote_yes >= majority {
+        let max_votes = policy[policy.len() - 1].num_votes(num_council);
+        if self.vote_yes >= max_votes {
             ProposalStatus::Success
         } else if self.vote_yes >= votes_required && self.vote_no == 0 {
             if env::block_timestamp() > self.vote_period_end { ProposalStatus::Success } else { ProposalStatus::Delay }
-        } else if self.vote_no >= majority {
+        } else if self.vote_no >= max_votes {
             ProposalStatus::Reject
         } else if env::block_timestamp() > self.vote_period_end {
             ProposalStatus::Fail
@@ -132,7 +147,7 @@ impl SputnikDAO {
             bond: bond.into(),
             vote_period: vote_period.into(),
             grace_period: grace_period.into(),
-            policy: Vec::new(),
+            policy: vec![PolicyItem { max_amount: 0.into(), votes: NumOrRatio::Ratio(1, 2) }],
             council: UnorderedSet::new(b"c".to_vec()),
             proposals: Vector::new(b"p".to_vec()),
         };
@@ -151,7 +166,7 @@ impl SputnikDAO {
         match proposal.kind {
             ProposalKind::ChangePolicy(ref policy) => {
                 for i in 1..policy.len() {
-                    assert!(policy[i].max_amount.0 > policy[i - 1].max_amount.0 && policy[i].num_votes > policy[i - 1].num_votes, "Policy must be sorted, item {} is wrong", i);
+                    assert!(policy[i].max_amount.0 > policy[i - 1].max_amount.0, "Policy must be sorted, item {} is wrong", i);
                 }
             },
             _ => {},
@@ -334,7 +349,7 @@ mod tests {
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy(vec![PolicyItem { max_amount: 100.into(), num_votes: 1 }])
+            kind: ProposalKind::ChangePolicy(vec![PolicyItem { max_amount: 100.into(), votes: NumOrRatio::Number(1) }, PolicyItem { max_amount: 1_000_000.into(), votes: NumOrRatio::Ratio(1, 1) }])
         });
         vote(&mut dao, id, vec![(0, Vote::Yes), (1, Vote::Yes)]);
 
@@ -349,6 +364,20 @@ mod tests {
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Delay);
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(3)).block_timestamp(11).finish());
         dao.finalize(id);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
+
+        // New policy for bigger amounts requires 100% votes.
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(2),
+            description: "give me more money".to_string(),
+            kind: ProposalKind::Payout { amount: 10_000.into() },
+        });
+        vote(&mut dao, id, vec![(0, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Vote);
+        vote(&mut dao, id, vec![(1, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Vote);
+        vote(&mut dao, id, vec![(2, Vote::Yes)]);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
     }
 
@@ -394,7 +423,7 @@ mod tests {
         dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy(vec![PolicyItem { max_amount: 100.into(), num_votes: 5 }, PolicyItem { max_amount: 5.into(), num_votes: 3 }])
+            kind: ProposalKind::ChangePolicy(vec![PolicyItem { max_amount: 100.into(), votes: NumOrRatio::Number(5) }, PolicyItem { max_amount: 5.into(), votes: NumOrRatio::Number(3) }])
         });
     }
 }

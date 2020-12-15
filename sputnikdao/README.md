@@ -21,12 +21,19 @@ Spec for v1:
         - If this vote achieves >50% of council members saying "YES" - it executes action on success.
  - Upgradability with super majority vote of the council
 
-Voting policy:
+Voting policy is a list of amounts and number or percentage of votes required.
+Where the last number in the list is used for all the non payouts (let's call it MAX_VOTE).
+
+Specific voting:
  - There is a policy that defines for `Payout` proposals at different `amount` how much "YES" votes are required. For non-`Payout` proposals - it's always 1/2 + 1 of council.
  - If there is 0 "NO" votes and given "YES" votes - the expiration date updates to current time + cooldown time.
- - If there is at least 1 "NO" then 1/2 + 1 of "YES" votes is required.
- - If there is 1/2 + 1 "NO" votes - the proposal gets rejected and bond not returned
+ - If there is at least 1 "NO" then MAX_VOTE of "YES" votes is required.
+ - If there is MAX_VOTE "NO" votes - the proposal gets rejected and bond not returned
  - If there is no super majority and time to withdraw have passed - proposal fails and the bond gets returned. 
+
+For example, voting policy:
+  - `[(0, NumOrRation::Ration(1, 2))]` -- meaning that for any amount or vote MAX_VOTE = 1/2 + 1 is used.
+  - `[(100, NumOrRation::Number(2)), (10000000, NumOrRation::Ration(2, 3))]` -- if amount is below 100 - 2 votes is enough within grace period. Otherwise MAX_VOTE = 2/3 + 1 to pass any larger proposal or add/remove council members.  
 
 Target audience for v1: [ToDo]
 
@@ -92,3 +99,9 @@ Here is the idea to attach bounties to the same council:
  - People can indicate that they are working on it
  - When someone completed bounty - they ping the bounty for "review" and council votes if the bounty is solved.
  - When council voted -> bounty gets paid out
+
+## Canceling / redirecting proposals
+
+If proposal is made to a wrong DAO, it's not great to take the bond away from proposer.
+It's possible to add an option to transfer proposals from one DAO to another DAO.
+Also people can vote to dismiss instead of rejecting it, which will return bond.
