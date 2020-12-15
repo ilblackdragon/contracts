@@ -17,12 +17,32 @@ enum Vote {
     No
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Eq, PartialEq, Debug, Serialize, Deserialize)]
+/// Policy item, defining how many votes required to approve up to this much amount.
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+struct PolicyItem {
+    pub max_amount: WrappedBalance,
+    pub num_votes: u64,
+}
+
+fn vote_requirement(policy: &[PolicyItem], num_council: u64, amount: Option<Balance>) -> u64 {
+    if let Some(amount) = amount {
+        // TODO: replace with binary search.
+        for item in policy {
+            if item.max_amount.0 > amount {
+                return item.num_votes
+            }
+        }
+    }
+    num_council / 2 + 1
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Eq, PartialEq, Debug, Serialize, Deserialize, Clone)]
 enum ProposalStatus {
     Vote,
     Success,
     Reject,
     Fail,
+    Delay,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -37,7 +57,8 @@ enum ProposalKind {
     },
     ChangeBond {
         bond: WrappedBalance,
-    }
+    },
+    ChangePolicy(Vec<PolicyItem>)
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -54,12 +75,22 @@ struct Proposal {
 }
 
 impl Proposal {
+    pub fn get_amount(&self) -> Option<Balance> {
+        match self.kind {
+            ProposalKind::Payout { amount } => Some(amount.0),
+            _ => None
+        }
+    }
+
     /// Compute new vote status given council size and current timestamp.
-    pub fn vote_status(&self, num_council: u64) -> ProposalStatus {
-        let majority = num_council / 2;
-        if self.vote_yes > majority {
+    pub fn vote_status(&self, policy: &[PolicyItem], num_council: u64) -> ProposalStatus {
+        let votes_required = vote_requirement(policy, num_council, self.get_amount());
+        let majority = num_council / 2 + 1;
+        if self.vote_yes >= majority {
             ProposalStatus::Success
-        } else if self.vote_no > majority {
+        } else if self.vote_yes >= votes_required && self.vote_no == 0 {
+            if env::block_timestamp() > self.vote_period_end { ProposalStatus::Success } else { ProposalStatus::Delay }
+        } else if self.vote_no >= majority {
             ProposalStatus::Reject
         } else if env::block_timestamp() > self.vote_period_end {
             ProposalStatus::Fail
@@ -78,26 +109,30 @@ struct ProposalInput {
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize)]
-struct GrantDAO {
+struct SputnikDAO {
     bond: Balance,
     vote_period: Duration,
+    grace_period: Duration,
+    policy: Vec<PolicyItem>,
     council: UnorderedSet<AccountId>,
     proposals: Vector<Proposal>,
 }
 
-impl Default for GrantDAO {
+impl Default for SputnikDAO {
     fn default() -> Self {
         env::panic(b"GrantDAO should be initialized before usage")
     }
 }
 
 #[near_bindgen]
-impl GrantDAO {
+impl SputnikDAO {
     #[init]
-    pub fn new(council: Vec<AccountId>, bond: WrappedBalance, vote_period: WrappedDuration) -> Self {
+    pub fn new(council: Vec<AccountId>, bond: WrappedBalance, vote_period: WrappedDuration, grace_period: WrappedDuration) -> Self {
         let mut dao = Self {
             bond: bond.into(),
             vote_period: vote_period.into(),
+            grace_period: grace_period.into(),
+            policy: Vec::new(),
             council: UnorderedSet::new(b"c".to_vec()),
             proposals: Vector::new(b"p".to_vec()),
         };
@@ -112,6 +147,15 @@ impl GrantDAO {
         // TOOD: add also extra storage cost for the proposal itself.
         assert!(env::attached_deposit() >= self.bond, "Not enough deposit");
         assert!(proposal.description.len() < MAX_DESCRIPTION_LENGTH, "Description length is too long");
+        // Input verification.
+        match proposal.kind {
+            ProposalKind::ChangePolicy(ref policy) => {
+                for i in 1..policy.len() {
+                    assert!(policy[i].max_amount.0 > policy[i - 1].max_amount.0 && policy[i].num_votes > policy[i - 1].num_votes, "Policy must be sorted, item {} is wrong", i);
+                }
+            },
+            _ => {},
+        }
         let p = Proposal {
             status: ProposalStatus::Vote,
             proposer: env::predecessor_account_id(),
@@ -156,7 +200,7 @@ impl GrantDAO {
     pub fn vote(&mut self, id: u64, vote: Vote) {
         assert!(self.council.contains(&env::predecessor_account_id()), "Only council can vote");
         let mut proposal = self.proposals.get(id).expect("No proposal with such id");
-        assert!(proposal.status == ProposalStatus::Vote, "Proposal already finalized");
+        assert_eq!(proposal.status, ProposalStatus::Vote, "Proposal already finalized");
         if proposal.vote_period_end < env::block_timestamp() {
             env::log(b"Voting period expired, finalizing the proposal");
             self.finalize(id);
@@ -168,17 +212,23 @@ impl GrantDAO {
             Vote::No => proposal.vote_no += 1,
         }
         proposal.votes.insert(env::predecessor_account_id(), vote);
+        let post_status = proposal.vote_status(&self.policy, self.council.len());
+        // If just changed from vote to Delay, adjust the expiration date to grace period.
+        if post_status == ProposalStatus::Delay && proposal.status == ProposalStatus::Vote {
+            proposal.vote_period_end = env::block_timestamp() + self.grace_period;
+            proposal.status = post_status.clone();
+        }
         self.proposals.replace(id, &proposal);
-        // Finalize if this vote has achieved majority.
-        if proposal.vote_status(self.council.len()) != ProposalStatus::Vote {
+        // Finalize if this vote is done.
+        if post_status != ProposalStatus::Delay && post_status != ProposalStatus::Vote {
             self.finalize(id);
         }
     }
 
     pub fn finalize(&mut self, id: u64) {
         let mut proposal = self.proposals.get(id).expect("No proposal with such id");
-        assert!(proposal.status == ProposalStatus::Vote, "Proposal already finalized");
-        proposal.status = proposal.vote_status(self.council.len());
+        assert!(proposal.status == ProposalStatus::Vote || proposal.status == ProposalStatus::Delay, "Proposal already finalized");
+        proposal.status = proposal.vote_status(&self.policy, self.council.len());
         match proposal.status {
             ProposalStatus::Success => {
                 env::log(b"Vote succeeded");
@@ -199,6 +249,9 @@ impl GrantDAO {
                     },
                     ProposalKind::ChangeBond { bond } => {
                         self.bond = bond.into();
+                    },
+                    ProposalKind::ChangePolicy(ref policy) => {
+                        self.policy = policy.clone();
                     }
                 };
             },
@@ -210,7 +263,7 @@ impl GrantDAO {
                 env::log(b"Proposal vote failed");
                 Promise::new(proposal.proposer.clone()).transfer(self.bond);
             }
-            ProposalStatus::Vote => env::panic(b"voting period has not expired and no majority vote yet")
+            ProposalStatus::Vote | ProposalStatus::Delay => env::panic(b"voting period has not expired and no majority vote yet")
         }
         self.proposals.replace(id, &proposal);
     }
@@ -223,10 +276,17 @@ mod tests {
 
     use super::*;
 
+    fn vote(dao: &mut SputnikDAO, proposal_id: u64, votes: Vec<(usize, Vote)>) {
+        for (id, vote) in votes {
+            testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(id)).finish());
+            dao.vote(proposal_id, vote);
+        }
+    }
+
     #[test]
     fn test_basics() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1_000.into());
+        let mut dao = SputnikDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1_000.into(), 10.into());
 
         assert_eq!(dao.get_bond(), 10.into());
         assert_eq!(dao.get_vote_period(), 1_000.into());
@@ -239,11 +299,11 @@ mod tests {
         });
         assert_eq!(dao.get_num_proposals(), 1);
         assert_eq!(dao.get_proposals(0, 1).len(), 1);
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
-        dao.vote(id, Vote::Yes);
+        vote(&mut dao, id, vec![(0, Vote::Yes)]);
         assert_eq!(dao.get_proposal(id).vote_yes, 1);
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(1)).finish());
-        dao.vote(id, Vote::Yes);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Vote);
+        assert_eq!(dao.get_council(), vec![accounts(0), accounts(1)]);
+        vote(&mut dao, id, vec![(1, Vote::Yes)]);
         assert_eq!(dao.get_council(), vec![accounts(0), accounts(1), accounts(2)]);
 
         // Pay out money for proposal. 2 votes yes vs 1 vote no.
@@ -253,12 +313,9 @@ mod tests {
             description: "give me money".to_string(),
             kind: ProposalKind::Payout { amount: 10.into() },
         });
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
-        dao.vote(id, Vote::No);
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(1)).finish());
-        dao.vote(id, Vote::Yes);
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).finish());
-        dao.vote(id, Vote::Yes);
+        vote(&mut dao, id, vec![(0, Vote::No), (1, Vote::Yes), (2, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).vote_yes, 2);
+        assert_eq!(dao.get_proposal(id).vote_no, 1);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
 
         // No vote for proposal.
@@ -271,12 +328,34 @@ mod tests {
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(3)).block_timestamp(1_001).finish());
         dao.finalize(id);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Fail);
+
+        // Change policy.
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(2),
+            description: "policy".to_string(),
+            kind: ProposalKind::ChangePolicy(vec![PolicyItem { max_amount: 100.into(), num_votes: 1 }])
+        });
+        vote(&mut dao, id, vec![(0, Vote::Yes), (1, Vote::Yes)]);
+
+        // Try new policy with small amount.
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(2),
+            description: "give me more money".to_string(),
+            kind: ProposalKind::Payout { amount: 10.into() },
+        });
+        vote(&mut dao, id, vec![(0, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Delay);
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(3)).block_timestamp(11).finish());
+        dao.finalize(id);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
     }
 
     #[test]
     fn test_single_council() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = GrantDAO::new(vec![accounts(0)], 10.into(), 1_000.into());
+        let mut dao = SputnikDAO::new(vec![accounts(0)], 10.into(), 1_000.into(), 10.into());
 
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
@@ -284,8 +363,7 @@ mod tests {
             description: "add new member".to_string(),
             kind: ProposalKind::NewCouncil
         });
-        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
-        dao.vote(id, Vote::Yes);
+        vote(&mut dao, id, vec![(0, Vote::Yes)]);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
         assert_eq!(dao.get_council(), vec![accounts(0), accounts(1)]);
     }
@@ -294,7 +372,7 @@ mod tests {
     #[should_panic]
     fn test_double_vote() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = GrantDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1000.into());
+        let mut dao = SputnikDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1000.into(), 10.into());
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
@@ -305,5 +383,18 @@ mod tests {
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(0)).finish());
         dao.vote(id, Vote::Yes);
         dao.vote(id, Vote::Yes);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_incorrect_policy() {
+        testing_env!(VMContextBuilder::new().finish());
+        let mut dao = SputnikDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1000.into(), 10.into());
+        testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
+        dao.add_proposal(ProposalInput {
+            target: accounts(2),
+            description: "policy".to_string(),
+            kind: ProposalKind::ChangePolicy(vec![PolicyItem { max_amount: 100.into(), num_votes: 5 }, PolicyItem { max_amount: 5.into(), num_votes: 3 }])
+        });
     }
 }
