@@ -12,20 +12,20 @@ static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc:
 const MAX_DESCRIPTION_LENGTH: usize = 280;
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
-enum Vote {
+pub enum Vote {
     Yes,
     No
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-enum NumOrRatio {
+pub enum NumOrRatio {
     Number(u64),
     Ratio(u64, u64),
 }
 
 /// Policy item, defining how many votes required to approve up to this much amount.
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-struct PolicyItem {
+pub struct PolicyItem {
     pub max_amount: WrappedBalance,
     pub votes: NumOrRatio,
 }
@@ -52,7 +52,7 @@ fn vote_requirement(policy: &[PolicyItem], num_council: u64, amount: Option<Bala
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Eq, PartialEq, Debug, Serialize, Deserialize, Clone)]
-enum ProposalStatus {
+pub enum ProposalStatus {
     Vote,
     Success,
     Reject,
@@ -61,7 +61,7 @@ enum ProposalStatus {
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
-enum ProposalKind {
+pub enum ProposalKind {
     NewCouncil,
     RemoveCouncil,
     Payout {
@@ -77,7 +77,7 @@ enum ProposalKind {
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
-struct Proposal {
+pub struct Proposal {
     status: ProposalStatus,
     proposer: AccountId,
     target: AccountId,
@@ -116,7 +116,7 @@ impl Proposal {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ProposalInput {
+pub struct ProposalInput {
     target: AccountId,
     description: String,
     kind: ProposalKind,
@@ -124,7 +124,7 @@ struct ProposalInput {
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize)]
-struct SputnikDAO {
+pub struct SputnikDAO {
     bond: Balance,
     vote_period: Duration,
     grace_period: Duration,
@@ -143,6 +143,7 @@ impl Default for SputnikDAO {
 impl SputnikDAO {
     #[init]
     pub fn new(council: Vec<AccountId>, bond: WrappedBalance, vote_period: WrappedDuration, grace_period: WrappedDuration) -> Self {
+        assert!(!env::state_exists(), "The contract is already initialized");
         let mut dao = Self {
             bond: bond.into(),
             vote_period: vote_period.into(),
