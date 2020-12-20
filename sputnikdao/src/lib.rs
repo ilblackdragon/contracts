@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use near_lib::types::{WrappedDuration, Duration, WrappedBalance};
+use near_lib::types::{Duration, WrappedBalance, WrappedDuration};
 use near_sdk::{AccountId, Balance, env, near_bindgen, Promise};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedSet, Vector};
@@ -79,7 +79,8 @@ pub enum ProposalKind {
     ChangeBond {
         bond: WrappedBalance,
     },
-    ChangePolicy(Vec<PolicyItem>)
+    ChangePolicy(Vec<PolicyItem>),
+    ChangePurpose(String),
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -131,6 +132,7 @@ pub struct ProposalInput {
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct SputnikDAO {
+    purpose: String,
     bond: Balance,
     vote_period: Duration,
     grace_period: Duration,
@@ -148,9 +150,10 @@ impl Default for SputnikDAO {
 #[near_bindgen]
 impl SputnikDAO {
     #[init]
-    pub fn new(council: Vec<AccountId>, bond: WrappedBalance, vote_period: WrappedDuration, grace_period: WrappedDuration) -> Self {
+    pub fn new(purpose: String, council: Vec<AccountId>, bond: WrappedBalance, vote_period: WrappedDuration, grace_period: WrappedDuration) -> Self {
         assert!(!env::state_exists(), "The contract is already initialized");
         let mut dao = Self {
+            purpose,
             bond: bond.into(),
             vote_period: vote_period.into(),
             grace_period: grace_period.into(),
@@ -274,6 +277,9 @@ impl SputnikDAO {
                     },
                     ProposalKind::ChangePolicy(ref policy) => {
                         self.policy = policy.clone();
+                    },
+                    ProposalKind::ChangePurpose(ref purpose) => {
+                        self.purpose = purpose.clone();
                     }
                 };
             },
@@ -308,7 +314,7 @@ mod tests {
     #[test]
     fn test_basics() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = SputnikDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1_000.into(), 10.into());
+        let mut dao = SputnikDAO::new("".to_string(), vec![accounts(0), accounts(1)], 10.into(), 1_000.into(), 10.into());
 
         assert_eq!(dao.get_bond(), 10.into());
         assert_eq!(dao.get_vote_period(), 1_000.into());
@@ -391,7 +397,7 @@ mod tests {
     #[test]
     fn test_single_council() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = SputnikDAO::new(vec![accounts(0)], 10.into(), 1_000.into(), 10.into());
+        let mut dao = SputnikDAO::new("".to_string(), vec![accounts(0)], 10.into(), 1_000.into(), 10.into());
 
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
@@ -408,7 +414,7 @@ mod tests {
     #[should_panic]
     fn test_double_vote() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = SputnikDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1000.into(), 10.into());
+        let mut dao = SputnikDAO::new("".to_string(), vec![accounts(0), accounts(1)], 10.into(), 1000.into(), 10.into());
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
@@ -425,7 +431,7 @@ mod tests {
     #[should_panic]
     fn test_incorrect_policy() {
         testing_env!(VMContextBuilder::new().finish());
-        let mut dao = SputnikDAO::new(vec![accounts(0), accounts(1)], 10.into(), 1000.into(), 10.into());
+        let mut dao = SputnikDAO::new("".to_string(), vec![accounts(0), accounts(1)], 10.into(), 1000.into(), 10.into());
         testing_env!(VMContextBuilder::new().predecessor_account_id(accounts(2)).attached_deposit(10).finish());
         dao.add_proposal(ProposalInput {
             target: accounts(2),
