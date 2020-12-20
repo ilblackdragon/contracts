@@ -53,10 +53,16 @@ fn vote_requirement(policy: &[PolicyItem], num_council: u64, amount: Option<Bala
 
 #[derive(BorshSerialize, BorshDeserialize, Eq, PartialEq, Debug, Serialize, Deserialize, Clone)]
 pub enum ProposalStatus {
+    /// Proposal is in active voting stage.
     Vote,
+    /// Proposal has successfully passed.
     Success,
+    /// Proposal was rejected by the vote.
     Reject,
+    /// Vote for proposal has failed due (not enuough votes).
     Fail,
+    /// Given voting policy, the uncontested minimum of votes was acquired.
+    /// Delaying the finalization of the proposal to check that there is no contenders (who would vote against).
     Delay,
 }
 
@@ -135,7 +141,7 @@ pub struct SputnikDAO {
 
 impl Default for SputnikDAO {
     fn default() -> Self {
-        env::panic(b"GrantDAO should be initialized before usage")
+        env::panic(b"SputnikDAO should be initialized before usage")
     }
 }
 
