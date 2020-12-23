@@ -53,3 +53,20 @@ impl SputnikDAOFactory {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use near_lib::context::{accounts, VMContextBuilder};
+    use near_sdk::{testing_env, MockedBlockchain};
+
+    use super::*;
+
+    #[test]
+    fn test_basics() {
+        testing_env!(VMContextBuilder::new().current_account_id(accounts(0)).finish());
+        let mut factory = SputnikDAOFactory::new();
+        testing_env!(VMContextBuilder::new().current_account_id(accounts(0)).attached_deposit(10).finish());
+        factory.create("test".to_string(), "{}".as_bytes().to_vec().into());
+        assert_eq!(factory.get_dao_list(), vec![format!("test.{}", accounts(0))]);
+    }
+}
