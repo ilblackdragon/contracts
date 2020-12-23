@@ -1,7 +1,7 @@
 use near_lib::upgrade::Ownable;
-use near_sdk::{AccountId, env, near_bindgen, Promise};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::{Base64VecU8};
+use near_sdk::json_types::Base64VecU8;
+use near_sdk::{env, near_bindgen, AccountId, Promise};
 
 #[global_allocator]
 static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc::INIT;
@@ -37,7 +37,12 @@ impl GenericFactory {
         Promise::new(format!("{}.{}", name, env::current_account_id()))
             .create_account()
             .deploy_contract(code)
-            .function_call(b"new".to_vec(), args.into(), env::attached_deposit(), env::prepaid_gas() - CREATE_CALL_GAS)
+            .function_call(
+                b"new".to_vec(),
+                args.into(),
+                env::attached_deposit(),
+                env::prepaid_gas() - CREATE_CALL_GAS,
+            )
     }
 
     pub fn upgrade(&self, code: Base64VecU8) {
@@ -59,7 +64,7 @@ impl Ownable for GenericFactory {
 #[cfg(test)]
 mod tests {
     use near_lib::context::{accounts, VMContextBuilder};
-    use near_sdk::{MockedBlockchain, testing_env};
+    use near_sdk::{testing_env, MockedBlockchain};
 
     use super::*;
 

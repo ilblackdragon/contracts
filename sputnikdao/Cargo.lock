@@ -424,7 +424,6 @@ version = "0.1.0"
 dependencies = [
  "near-lib",
  "near-sdk",
- "serde",
 ]
 
 [[package]]
