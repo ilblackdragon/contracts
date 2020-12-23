@@ -74,7 +74,7 @@ near call $CONTRACT_ID new '{"purpose": "test", "council": ["testmewell.testnet"
 near view $CONTRACT_ID get_num_proposals
 
 # Add new proposal to pay `illia` 1N. 
-near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"Payout": { "amount": "1000000000000000000000000"}}}}' --accountId=illia --amount 1
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": "Payout", "amount": "1000000000000000000000000"}}}' --accountId=illia --amount 1
 
 # View proposal #0
 near view $CONTRACT_ID get_proposal '{"id": 0}'
@@ -100,16 +100,16 @@ near call $CONTRACT_ID vote '{"id": 0, "vote": "Yes"}' --accountId illia
 near call $CONTRACT_ID vote '{"id": 0, "vote": "No"}' --accountId testmewell.testnet
 
 # Proposal to add new council `testnet`.
-near call $CONTRACT_ID add_proposal '{"proposal": {"target": "testnet", "description": "test", "kind": "NewCouncil"}}' --accountId=illia --amount 1
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "testnet", "description": "test", "kind": {"type": "NewCouncil"}}}' --accountId=illia --amount 1
 
 # Proposal to remove council `illia`.
-near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": "RemoveCouncil"}}' --accountId=illia --amount 1
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": RemoveCouncil"}}}' --accountId=illia --amount 1
 
 # Proposal to change vote period to 30min (in nanoseconds):
-near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"ChangeVotePeriod": {"vote_period": "1800000000000"}}}}' --accountId=illia --amount 1
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": "ChangeVotePeriod", "vote_period": "1800000000000"}}}' --accountId=illia --amount 1
 
 # Proposal to change purpose of this DAO:
-near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"ChangePurpose": "test me well"}}}' --accountId=illia --amount 1
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": "ChangePurpose", "purpose": "test me well"}}}' --accountId=illia --amount 1
 ```
 
 # Ideas for improving

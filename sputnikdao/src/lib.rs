@@ -72,14 +72,15 @@ pub enum ProposalStatus {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
+#[serde(tag = "type")]
 pub enum ProposalKind {
     NewCouncil,
     RemoveCouncil,
     Payout { amount: WrappedBalance },
     ChangeVotePeriod { vote_period: WrappedDuration },
     ChangeBond { bond: WrappedBalance },
-    ChangePolicy(Vec<PolicyItem>),
-    ChangePurpose(String),
+    ChangePolicy { policy: Vec<PolicyItem> },
+    ChangePurpose { purpose: String },
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -191,7 +192,7 @@ impl SputnikDAO {
         );
         // Input verification.
         match proposal.kind {
-            ProposalKind::ChangePolicy(ref policy) => {
+            ProposalKind::ChangePolicy{ ref policy } => {
                 for i in 1..policy.len() {
                     assert!(
                         policy[i].max_amount.0 > policy[i - 1].max_amount.0,
@@ -313,10 +314,10 @@ impl SputnikDAO {
                     ProposalKind::ChangeBond { bond } => {
                         self.bond = bond.into();
                     }
-                    ProposalKind::ChangePolicy(ref policy) => {
+                    ProposalKind::ChangePolicy{ ref policy } => {
                         self.policy = policy.clone();
                     }
-                    ProposalKind::ChangePurpose(ref purpose) => {
+                    ProposalKind::ChangePurpose{ ref purpose } => {
                         self.purpose = purpose.clone();
                     }
                 };
