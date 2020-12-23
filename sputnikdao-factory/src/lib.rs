@@ -37,6 +37,7 @@ impl SputnikDAOFactory {
         self.daos.to_vec()
     }
 
+    #[payable]
     pub fn create(&mut self, name: AccountId, args: Base64VecU8) -> Promise {
         let account_id= format!("{}.{}", name, env::current_account_id());
         self.daos.insert(&account_id);

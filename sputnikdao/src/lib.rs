@@ -243,6 +243,10 @@ impl SputnikDAO {
         self.proposals.get(id).expect("Proposal not found")
     }
 
+    pub fn get_purpose(&self) -> String {
+        self.purpose.clone()
+    }
+
     pub fn vote(&mut self, id: u64, vote: Vote) {
         assert!(
             self.council.contains(&env::predecessor_account_id()),
@@ -353,7 +357,7 @@ mod tests {
     fn test_basics() {
         testing_env!(VMContextBuilder::new().finish());
         let mut dao = SputnikDAO::new(
-            "".to_string(),
+            "test".to_string(),
             vec![accounts(0), accounts(1)],
             10.into(),
             1_000.into(),
@@ -362,6 +366,7 @@ mod tests {
 
         assert_eq!(dao.get_bond(), 10.into());
         assert_eq!(dao.get_vote_period(), 1_000.into());
+        assert_eq!(dao.get_purpose(), "test");
 
         testing_env!(VMContextBuilder::new()
             .predecessor_account_id(accounts(2))
