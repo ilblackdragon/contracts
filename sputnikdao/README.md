@@ -59,11 +59,25 @@ Follow general WASM / Rust contract instructions.
 ## Deploy to TestNet
 
 ```bash
-> near dev-deploy res/grandao.wasm
-> near call dev-1607495280084-9068895 new '{"purpose": "test", "council": ["testmewell.testnet", "illia"], "bond": "1000000000000000000000000", "vote_period": "1800000000000", "grade_period": "1800000000000"}' --accountId dev-1607495280084-9068895
-> near view dev-1607495280084-9068895 get_num_proposals
-> near call dev-1607495280084-9068895 add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"Payout": { "amount": "1000000000000000000000000"}}}}' --accountId=illia --amount 1
-> near view dev-1607495280084-9068895 get_proposal '{"id": 0}'
+
+# Deploy to new account on TestNet
+near dev-deploy res/grandao.wasm
+
+# Set contract Id (fish)
+set CONTRACT_ID "dev-1608720833104-8969578"
+
+# Initialize contract with given council and parameters (this is for testing, where you stil have access key to the contract).
+# For production use either a single command or the factory in ../sputnikdao-factory 
+near call $CONTRACT_ID new '{"purpose": "test", "council": ["testmewell.testnet", "illia"], "bond": "1000000000000000000000000", "vote_period": "1800000000000", "grace_period": "1800000000000"}' --accountId $CONTRACT_ID
+
+# Get current number of proposals.
+near view $CONTRACT_ID get_num_proposals
+
+# Add new proposal to pay `illia` 1N. 
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"Payout": { "amount": "1000000000000000000000000"}}}}' --accountId=illia --amount 1
+
+# View proposal #0
+near view $CONTRACT_ID get_proposal '{"id": 0}'
 {
   status: 'Vote',
   proposer: 'illia',
@@ -76,8 +90,26 @@ Follow general WASM / Rust contract instructions.
   votes: {}
 }
 
-> near view dev-1607495280084-9068895 get_proposals '{"from_index": 0, "limit": 1}'
-> near call dev-1607495280084-9068895 vote '{"id": 0, "vote": "Yes"}' --accountId illia
+# Get `limit=1` proposals from id=0 
+near view $CONTRACT_ID get_proposals '{"from_index": 0, "limit": 1}'
+
+# Vote for a proposal #0 `Yes` from `illia`
+near call $CONTRACT_ID vote '{"id": 0, "vote": "Yes"}' --accountId illia
+
+# Vote for a proposal #0 `No` from `testmewell.testnet`
+near call $CONTRACT_ID vote '{"id": 0, "vote": "No"}' --accountId testmewell.testnet
+
+# Proposal to add new council `testnet`.
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "testnet", "description": "test", "kind": "NewCouncil"}}' --accountId=illia --amount 1
+
+# Proposal to remove council `illia`.
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": "RemoveCouncil"}}' --accountId=illia --amount 1
+
+# Proposal to change vote period to 30min (in nanoseconds):
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"ChangeVotePeriod": {"vote_period": "1800000000000"}}}}' --accountId=illia --amount 1
+
+# Proposal to change purpose of this DAO:
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"ChangePurpose": "test me well"}}}' --accountId=illia --amount 1
 ```
 
 # Ideas for improving
