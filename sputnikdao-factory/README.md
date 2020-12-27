@@ -21,7 +21,7 @@ ARGS=`echo '{"purpose": "test", "council": ["testmewell.testnet", "illia"], "bon
 set ARGS (echo '{"purpose": "test", "council": ["testmewell.testnet", "illia"], "bond": "1000000000000000000000000", "vote_period": "1800000000000", "grace_period": "1800000000000"}' | base64)
 
 # Create new DAO with the given parameters.
-near call $CONTRACT_ID create "{\"name\": \"test\", \"args\": \"$ARGS\"}"  --accountId $CONTRACT_ID --amount 30
+near call $CONTRACT_ID create "{\"name\": \"test\", \"args\": \"$ARGS\"}"  --accountId $CONTRACT_ID --amount 30 --gas 100000000000000
 
 # List all created DAOs.
 near view $CONTRACT_ID get_dao_list

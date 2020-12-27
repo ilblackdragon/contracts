@@ -9,7 +9,7 @@ static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc:
 const CODE: &[u8] = include_bytes!("../../sputnikdao/res/sputnikdao.wasm");
 
 /// This gas spent on the call & account creation, the rest goes to the `new` call.
-const CREATE_CALL_GAS: u64 = 30_000_000_000_000;
+const CREATE_CALL_GAS: u64 = 40_000_000_000_000;
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -39,7 +39,7 @@ impl SputnikDAOFactory {
 
     #[payable]
     pub fn create(&mut self, name: AccountId, args: Base64VecU8) -> Promise {
-        let account_id= format!("{}.{}", name, env::current_account_id());
+        let account_id = format!("{}.{}", name, env::current_account_id());
         self.daos.insert(&account_id);
         Promise::new(account_id)
             .create_account()
