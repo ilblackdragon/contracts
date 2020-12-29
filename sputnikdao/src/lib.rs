@@ -54,6 +54,13 @@ fn vote_requirement(policy: &[PolicyItem], num_council: u64, amount: Option<Bala
     policy[policy.len() - 1].num_votes(num_council)
 }
 
+fn add_non_payout_policy_item(policy: Vec<PolicyItem>) -> Vec<PolicyItem> {
+    policy.iter().chain(vec![PolicyItem {
+        max_amount: 0.into(),
+        votes: NumOrRatio::Ratio(1, 2),
+    }]).collect()
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Eq, PartialEq, Debug, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ProposalStatus {
@@ -164,15 +171,13 @@ impl SputnikDAO {
         grace_period: WrappedDuration,
     ) -> Self {
         assert!(!env::state_exists(), "The contract is already initialized");
+
         let mut dao = Self {
             purpose,
             bond: bond.into(),
             vote_period: vote_period.into(),
             grace_period: grace_period.into(),
-            policy: vec![PolicyItem {
-                max_amount: 0.into(),
-                votes: NumOrRatio::Ratio(1, 2),
-            }],
+            policy: add_non_payout_policy_item(Vec::new()),
             council: UnorderedSet::new(b"c".to_vec()),
             proposals: Vector::new(b"p".to_vec()),
         };
@@ -184,7 +189,7 @@ impl SputnikDAO {
 
     #[payable]
     pub fn add_proposal(&mut self, proposal: ProposalInput) -> u64 {
-        // TOOD: add also extra storage cost for the proposal itself.
+        // TODO: add also extra storage cost for the proposal itself.
         assert!(env::attached_deposit() >= self.bond, "Not enough deposit");
         assert!(
             proposal.description.len() < MAX_DESCRIPTION_LENGTH,
@@ -193,6 +198,7 @@ impl SputnikDAO {
         // Input verification.
         match proposal.kind {
             ProposalKind::ChangePolicy{ ref policy } => {
+                assert_ne!(policy.len(), 0, "Policy shouldn't be empty");
                 for i in 1..policy.len() {
                     assert!(
                         policy[i].max_amount.0 > policy[i - 1].max_amount.0,
@@ -315,7 +321,24 @@ impl SputnikDAO {
                         self.bond = bond.into();
                     }
                     ProposalKind::ChangePolicy{ ref policy } => {
-                        self.policy = policy.clone();
+                        let &last_item = &self.policy[self.policy.len()-1];
+                        let mut have_non_payout_policy_item = false;
+                        match last_item.max_amount.0 {
+                            0 => {
+                                match &last_item.votes {
+                                    NumOrRatio::Ratio(l,r) => {
+                                        have_non_payout_policy_item = 2==r/l;
+                                    }
+                                    _ => ()
+                                }
+                            }
+                            _ => ()
+                        }
+                        if have_non_payout_policy_item {
+                            self.policy = policy.clone();
+                        } else {
+                            self.policy = add_non_payout_policy_item(policy.clone());
+                        }
                     }
                     ProposalKind::ChangePurpose{ ref purpose } => {
                         self.purpose = purpose.clone();
@@ -434,7 +457,7 @@ mod tests {
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy(vec![
+            kind: ProposalKind::ChangePolicy{policy: vec![
                 PolicyItem {
                     max_amount: 100.into(),
                     votes: NumOrRatio::Number(1),
@@ -443,7 +466,7 @@ mod tests {
                     max_amount: 1_000_000.into(),
                     votes: NumOrRatio::Ratio(1, 1),
                 },
-            ]),
+            ]},
         });
         vote(&mut dao, id, vec![(0, Vote::Yes), (1, Vote::Yes)]);
 
@@ -557,7 +580,7 @@ mod tests {
         dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy(vec![
+            kind: ProposalKind::ChangePolicy{policy: vec![
                 PolicyItem {
                     max_amount: 100.into(),
                     votes: NumOrRatio::Number(5),
@@ -566,7 +589,7 @@ mod tests {
                     max_amount: 5.into(),
                     votes: NumOrRatio::Number(3),
                 },
-            ]),
+            ]},
         });
     }
 }
