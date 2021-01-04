@@ -20,6 +20,7 @@ pub enum Vote {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[serde(untagged)]
 pub enum NumOrRatio {
     Number(u64),
     Ratio(u64, u64),

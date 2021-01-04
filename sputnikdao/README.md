@@ -117,6 +117,13 @@ near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "descripti
 # Proposal to change purpose of this DAO:
 near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": "ChangePurpose", "purpose": "test me well"}}}' --accountId=illia --amount 1
 
+# Proposal to change policy for this DAO, with next voting policy:
+# - up until 100N: just need 2 votes
+# - up until 1000N: need 3 votes
+# - up until 2000N: need 50% + 1 votes
+# - for anything larger or other types of proposals need 66% + 1 of votes
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": "ChangePolicy", "policy": [{"max_amount": "100", "votes": 2}, {"max_amount": "1000", "votes": 3}, {"max_amount": "2000", "votes": [1, 2]}, {"max_amount": "10000000", "votes": [2, 3]}]}}}' --accountId=illia --amount 1
+
 # Finalize a proposal that has no deciding vote and expired.
 near call $CONTRACT_ID finalize '{"id": 4}'
 ```
