@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use near_lib::types::{Duration, WrappedBalance, WrappedDuration};
+use near_sdk::{AccountId, Balance, env, near_bindgen, Promise};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedSet, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, near_bindgen, AccountId, Balance, Promise};
 
 #[global_allocator]
 static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc::INIT;
@@ -70,6 +70,12 @@ pub enum ProposalStatus {
     Delay,
 }
 
+impl ProposalStatus {
+    pub fn is_finalized(&self) -> bool {
+        self != &ProposalStatus::Vote && self != &ProposalStatus::Delay
+    }
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 #[serde(tag = "type")]
@@ -119,7 +125,7 @@ impl Proposal {
             }
         } else if self.vote_no >= max_votes {
             ProposalStatus::Reject
-        } else if env::block_timestamp() > self.vote_period_end {
+        } else if env::block_timestamp() > self.vote_period_end || self.vote_yes + self.vote_no == num_council {
             ProposalStatus::Fail
         } else {
             ProposalStatus::Vote
@@ -275,13 +281,13 @@ impl SputnikDAO {
         proposal.votes.insert(env::predecessor_account_id(), vote);
         let post_status = proposal.vote_status(&self.policy, self.council.len());
         // If just changed from vote to Delay, adjust the expiration date to grace period.
-        if post_status == ProposalStatus::Delay && proposal.status == ProposalStatus::Vote {
+        if !post_status.is_finalized() {
             proposal.vote_period_end = env::block_timestamp() + self.grace_period;
             proposal.status = post_status.clone();
         }
         self.proposals.replace(id, &proposal);
         // Finalize if this vote is done.
-        if post_status != ProposalStatus::Delay && post_status != ProposalStatus::Vote {
+        if post_status.is_finalized() {
             self.finalize(id);
         }
     }
@@ -289,7 +295,7 @@ impl SputnikDAO {
     pub fn finalize(&mut self, id: u64) {
         let mut proposal = self.proposals.get(id).expect("No proposal with such id");
         assert!(
-            proposal.status == ProposalStatus::Vote || proposal.status == ProposalStatus::Delay,
+            !proposal.status.is_finalized(),
             "Proposal already finalized"
         );
         proposal.status = proposal.vote_status(&self.policy, self.council.len());
@@ -341,7 +347,7 @@ impl SputnikDAO {
 #[cfg(test)]
 mod tests {
     use near_lib::context::{accounts, VMContextBuilder};
-    use near_sdk::{testing_env, MockedBlockchain};
+    use near_sdk::{MockedBlockchain, testing_env};
 
     use super::*;
 
@@ -434,7 +440,7 @@ mod tests {
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy(vec![
+            kind: ProposalKind::ChangePolicy{ policy: vec![
                 PolicyItem {
                     max_amount: 100.into(),
                     votes: NumOrRatio::Number(1),
@@ -443,7 +449,7 @@ mod tests {
                     max_amount: 1_000_000.into(),
                     votes: NumOrRatio::Ratio(1, 1),
                 },
-            ]),
+            ]},
         });
         vote(&mut dao, id, vec![(0, Vote::Yes), (1, Vote::Yes)]);
 
@@ -540,6 +546,58 @@ mod tests {
     }
 
     #[test]
+    fn test_two_council() {
+        testing_env!(VMContextBuilder::new().finish());
+        let mut dao = SputnikDAO::new(
+            "".to_string(),
+            vec![accounts(0), accounts(1)],
+            10.into(),
+            1_000.into(),
+            10.into(),
+        );
+
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(accounts(2))
+            .attached_deposit(10)
+            .finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(1),
+            description: "add new member".to_string(),
+            kind: ProposalKind::Payout { amount: 100.into() },
+        });
+        vote(&mut dao, id, vec![(0, Vote::Yes), (1, Vote::No)]);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Fail);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_run_out_of_money() {
+        testing_env!(VMContextBuilder::new().finish());
+        let mut dao = SputnikDAO::new(
+            "".to_string(),
+            vec![accounts(0)],
+            10.into(),
+            1000.into(),
+            10.into(),
+        );
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(accounts(2))
+            .attached_deposit(10)
+            .finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(2),
+            description: "add new member".to_string(),
+            kind: ProposalKind::Payout { amount: 1000.into() },
+        });
+        assert_eq!(dao.get_proposals(0, 1).len(), 1);
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(accounts(0))
+            .account_balance(10)
+            .finish());
+        dao.vote(id, Vote::Yes);
+    }
+
+    #[test]
     #[should_panic]
     fn test_incorrect_policy() {
         testing_env!(VMContextBuilder::new().finish());
@@ -557,7 +615,7 @@ mod tests {
         dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy(vec![
+            kind: ProposalKind::ChangePolicy{ policy: vec![
                 PolicyItem {
                     max_amount: 100.into(),
                     votes: NumOrRatio::Number(5),
@@ -566,7 +624,7 @@ mod tests {
                     max_amount: 5.into(),
                     votes: NumOrRatio::Number(3),
                 },
-            ]),
+            ]},
         });
     }
 }
