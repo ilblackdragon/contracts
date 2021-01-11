@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use near_lib::types::{Duration, WrappedBalance, WrappedDuration};
-use near_sdk::{AccountId, Balance, env, near_bindgen, Promise};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedSet, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{env, near_bindgen, AccountId, Balance, Promise};
 
 #[global_allocator]
 static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc::INIT;
@@ -126,7 +126,9 @@ impl Proposal {
             }
         } else if self.vote_no >= max_votes {
             ProposalStatus::Reject
-        } else if env::block_timestamp() > self.vote_period_end || self.vote_yes + self.vote_no == num_council {
+        } else if env::block_timestamp() > self.vote_period_end
+            || self.vote_yes + self.vote_no == num_council
+        {
             ProposalStatus::Fail
         } else {
             ProposalStatus::Vote
@@ -199,7 +201,7 @@ impl SputnikDAO {
         );
         // Input verification.
         match proposal.kind {
-            ProposalKind::ChangePolicy{ ref policy } => {
+            ProposalKind::ChangePolicy { ref policy } => {
                 for i in 1..policy.len() {
                     assert!(
                         policy[i].max_amount.0 > policy[i - 1].max_amount.0,
@@ -321,10 +323,10 @@ impl SputnikDAO {
                     ProposalKind::ChangeBond { bond } => {
                         self.bond = bond.into();
                     }
-                    ProposalKind::ChangePolicy{ ref policy } => {
+                    ProposalKind::ChangePolicy { ref policy } => {
                         self.policy = policy.clone();
                     }
-                    ProposalKind::ChangePurpose{ ref purpose } => {
+                    ProposalKind::ChangePurpose { ref purpose } => {
                         self.purpose = purpose.clone();
                     }
                 };
@@ -348,7 +350,7 @@ impl SputnikDAO {
 #[cfg(test)]
 mod tests {
     use near_lib::context::{accounts, VMContextBuilder};
-    use near_sdk::{MockedBlockchain, testing_env};
+    use near_sdk::{testing_env, MockedBlockchain};
 
     use super::*;
 
@@ -441,16 +443,18 @@ mod tests {
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy{ policy: vec![
-                PolicyItem {
-                    max_amount: 100.into(),
-                    votes: NumOrRatio::Number(1),
-                },
-                PolicyItem {
-                    max_amount: 1_000_000.into(),
-                    votes: NumOrRatio::Ratio(1, 1),
-                },
-            ]},
+            kind: ProposalKind::ChangePolicy {
+                policy: vec![
+                    PolicyItem {
+                        max_amount: 100.into(),
+                        votes: NumOrRatio::Number(1),
+                    },
+                    PolicyItem {
+                        max_amount: 1_000_000.into(),
+                        votes: NumOrRatio::Ratio(1, 1),
+                    },
+                ],
+            },
         });
         vote(&mut dao, id, vec![(0, Vote::Yes), (1, Vote::Yes)]);
 
@@ -588,7 +592,9 @@ mod tests {
         let id = dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "add new member".to_string(),
-            kind: ProposalKind::Payout { amount: 1000.into() },
+            kind: ProposalKind::Payout {
+                amount: 1000.into(),
+            },
         });
         assert_eq!(dao.get_proposals(0, 1).len(), 1);
         testing_env!(VMContextBuilder::new()
@@ -616,16 +622,18 @@ mod tests {
         dao.add_proposal(ProposalInput {
             target: accounts(2),
             description: "policy".to_string(),
-            kind: ProposalKind::ChangePolicy{ policy: vec![
-                PolicyItem {
-                    max_amount: 100.into(),
-                    votes: NumOrRatio::Number(5),
-                },
-                PolicyItem {
-                    max_amount: 5.into(),
-                    votes: NumOrRatio::Number(3),
-                },
-            ]},
+            kind: ProposalKind::ChangePolicy {
+                policy: vec![
+                    PolicyItem {
+                        max_amount: 100.into(),
+                        votes: NumOrRatio::Number(5),
+                    },
+                    PolicyItem {
+                        max_amount: 5.into(),
+                        votes: NumOrRatio::Number(3),
+                    },
+                ],
+            },
         });
     }
 }
