@@ -249,6 +249,13 @@ impl SputnikDAO {
             .collect()
     }
 
+    pub fn get_proposals_by_status(&self, status: ProposalStatus, from_index: u64, limit: u64) -> HashMap<u64, Proposal> {
+        (from_index..std::cmp::min(from_index + limit, self.proposals.len()))
+            .filter(|index| self.proposals.get(*index).unwrap().status == status)
+            .map(|index| (index.clone(), self.proposals.get(index).unwrap()))
+            .collect()
+    }
+
     pub fn get_proposal(&self, id: u64) -> Proposal {
         self.proposals.get(id).expect("Proposal not found")
     }
