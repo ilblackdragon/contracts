@@ -250,16 +250,28 @@ impl SputnikDAO {
     }
 
     pub fn get_proposals_by_status(&self, status: ProposalStatus, from_index: u64, limit: u64) -> HashMap<u64, Proposal> {
-        (from_index..std::cmp::min(from_index + limit, self.proposals.len()))
+        let filtered_proposal_ids: Vec<u64> = (0..self.proposals.len())
             .filter(|index| self.proposals.get(index.clone()).unwrap().status == status)
-            .map(|index| (index, self.proposals.get(index).unwrap()))
+            .collect();
+
+        (from_index..std::cmp::min(from_index + limit, filtered_proposal_ids.len() as u64))
+            .map(|index| {
+                let proposal_id: u64 = filtered_proposal_ids[index as usize];
+                (proposal_id, self.proposals.get(proposal_id).unwrap())
+            })
             .collect()
     }
 
     pub fn get_proposals_by_statuses(&self, statuses: Vec<ProposalStatus>, from_index: u64, limit: u64) -> HashMap<u64, Proposal> {
-        (from_index..std::cmp::min(from_index + limit, self.proposals.len()))
+        let filtered_proposal_ids: Vec<u64> = (0..self.proposals.len())
             .filter(|index| statuses.contains(&self.proposals.get(index.clone()).unwrap().status))
-            .map(|index| (index, self.proposals.get(index).unwrap()))
+            .collect();
+
+        (from_index..std::cmp::min(from_index + limit, filtered_proposal_ids.len() as u64))
+            .map(|index| {
+                let proposal_id: u64 = filtered_proposal_ids[index as usize];
+                (proposal_id, self.proposals.get(proposal_id).unwrap())
+            })
             .collect()
     }
 
