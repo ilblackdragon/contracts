@@ -268,7 +268,12 @@ impl SputnikDAO {
             .collect()
     }
 
-    pub fn get_proposals_by_status(&self, status: ProposalStatus, from_index: u64, limit: u64) -> HashMap<u64, Proposal> {
+    pub fn get_proposals_by_status(
+        &self,
+        status: ProposalStatus,
+        from_index: u64,
+        limit: u64,
+    ) -> HashMap<u64, Proposal> {
         let filtered_proposal_ids: Vec<u64> = (0..self.proposals.len())
             .filter(|index| self.proposals.get(index.clone()).unwrap().status == status)
             .collect();
@@ -281,7 +286,12 @@ impl SputnikDAO {
             .collect()
     }
 
-    pub fn get_proposals_by_statuses(&self, statuses: Vec<ProposalStatus>, from_index: u64, limit: u64) -> HashMap<u64, Proposal> {
+    pub fn get_proposals_by_statuses(
+        &self,
+        statuses: Vec<ProposalStatus>,
+        from_index: u64,
+        limit: u64,
+    ) -> HashMap<u64, Proposal> {
         let filtered_proposal_ids: Vec<u64> = (0..self.proposals.len())
             .filter(|index| statuses.contains(&self.proposals.get(index.clone()).unwrap().status))
             .collect();
@@ -329,7 +339,7 @@ impl SputnikDAO {
         proposal.votes.insert(env::predecessor_account_id(), vote);
         let post_status = proposal.vote_status(&self.policy, self.council.len());
         // If just changed from vote to Delay, adjust the expiration date to grace period.
-        if !post_status.is_finalized() {
+        if !post_status.is_finalized() && post_status != proposal.status {
             proposal.vote_period_end = env::block_timestamp() + self.grace_period;
             proposal.status = post_status.clone();
         }
@@ -539,6 +549,34 @@ mod tests {
         vote(&mut dao, id, vec![(1, Vote::Yes)]);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Vote);
         vote(&mut dao, id, vec![(2, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
+    }
+
+    #[test]
+    fn test_expiration() {
+        testing_env!(VMContextBuilder::new().finish());
+        let mut dao = SputnikDAO::new(
+            "test".to_string(),
+            vec![accounts(0), accounts(1), accounts(2)],
+            10.into(),
+            1_000.into(),
+            10.into(),
+        );
+
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(accounts(2))
+            .attached_deposit(10)
+            .finish());
+        let id = dao.add_proposal(ProposalInput {
+            target: accounts(5),
+            description: "add new member".to_string(),
+            kind: ProposalKind::NewCouncil,
+        });
+        let vote_period_end = dao.get_proposal(id).vote_period_end;
+        vote(&mut dao, id, vec![(0, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).vote_period_end, vote_period_end);
+        vote(&mut dao, id, vec![(1, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).vote_period_end, vote_period_end);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Success);
     }
 
