@@ -26,6 +26,15 @@ pub enum NumOrRatio {
     Ratio(u64, u64),
 }
 
+impl NumOrRatio {
+    pub fn as_ratio(&self) -> Option<(u64, u64)> {
+        match self {
+            NumOrRatio::Number(_) => None,
+            NumOrRatio::Ratio(a, b) => Some((*a, *b)),
+        }
+    }
+}
+
 /// Policy item, defining how many votes required to approve up to this much amount.
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
@@ -173,6 +182,7 @@ impl SputnikDAO {
         grace_period: WrappedDuration,
     ) -> Self {
         assert!(!env::state_exists(), "The contract is already initialized");
+
         let mut dao = Self {
             purpose,
             bond: bond.into(),
@@ -193,7 +203,7 @@ impl SputnikDAO {
 
     #[payable]
     pub fn add_proposal(&mut self, proposal: ProposalInput) -> u64 {
-        // TOOD: add also extra storage cost for the proposal itself.
+        // TODO: add also extra storage cost for the proposal itself.
         assert!(env::attached_deposit() >= self.bond, "Not enough deposit");
         assert!(
             proposal.description.len() < MAX_DESCRIPTION_LENGTH,
@@ -202,6 +212,7 @@ impl SputnikDAO {
         // Input verification.
         match proposal.kind {
             ProposalKind::ChangePolicy { ref policy } => {
+                assert_ne!(policy.len(), 0, "Policy shouldn't be empty");
                 for i in 1..policy.len() {
                     assert!(
                         policy[i].max_amount.0 > policy[i - 1].max_amount.0,
@@ -209,6 +220,14 @@ impl SputnikDAO {
                         i
                     );
                 }
+                let last_ratio = policy[policy.len() - 1]
+                    .votes
+                    .as_ratio()
+                    .expect("Last item in policy must be a ratio");
+                assert!(
+                    last_ratio.0 * 2 / last_ratio.1 >= 1,
+                    "Last item in policy must be equal or above 1/2 ratio"
+                );
             }
             _ => {}
         }
