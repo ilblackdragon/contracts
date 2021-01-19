@@ -502,7 +502,7 @@ mod tests {
                 policy: vec![
                     PolicyItem {
                         max_amount: 100.into(),
-                        votes: NumOrRatio::Number(1),
+                        votes: NumOrRatio::Number(2),
                     },
                     PolicyItem {
                         max_amount: 1_000_000.into(),
@@ -523,8 +523,13 @@ mod tests {
             description: "give me more money".to_string(),
             kind: ProposalKind::Payout { amount: 10.into() },
         });
+        assert_eq!(dao.get_proposal(id).vote_period_end, 1_000);
         vote(&mut dao, id, vec![(0, Vote::Yes)]);
+        assert_eq!(dao.get_proposal(id).vote_period_end, 1_000);
+        assert_eq!(dao.get_proposal(id).status, ProposalStatus::Vote);
+        vote(&mut dao, id, vec![(1, Vote::Yes)]);
         assert_eq!(dao.get_proposal(id).status, ProposalStatus::Delay);
+        assert_eq!(dao.get_proposal(id).vote_period_end, 10);
         testing_env!(VMContextBuilder::new()
             .predecessor_account_id(accounts(3))
             .block_timestamp(11)
