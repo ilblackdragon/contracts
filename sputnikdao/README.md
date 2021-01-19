@@ -67,7 +67,7 @@ Follow general WASM / Rust contract instructions.
 ```bash
 
 # Deploy to new account on TestNet
-near dev-deploy res/grandao.wasm
+near dev-deploy res/sputnikdao.wasm
 
 # Set contract Id (fish)
 set CONTRACT_ID "dev-1608720833104-8969578"
