@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::Base64VecU8;
-use near_sdk::{env, near_bindgen, AccountId, Promise};
 use near_sdk::collections::UnorderedSet;
+use near_sdk::json_types::{Base58PublicKey, Base64VecU8};
+use near_sdk::{env, near_bindgen, AccountId, Promise};
 
 #[global_allocator]
 static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc::INIT;
@@ -38,19 +38,27 @@ impl SputnikDAOFactory {
     }
 
     #[payable]
-    pub fn create(&mut self, name: AccountId, args: Base64VecU8) -> Promise {
+    pub fn create(
+        &mut self,
+        name: AccountId,
+        public_key: Option<Base58PublicKey>,
+        args: Base64VecU8,
+    ) -> Promise {
         let account_id = format!("{}.{}", name, env::current_account_id());
         self.daos.insert(&account_id);
-        Promise::new(account_id)
+        let mut promise = Promise::new(account_id)
             .create_account()
             .deploy_contract(CODE.to_vec())
-            .transfer(env::attached_deposit())
-            .function_call(
-                b"new".to_vec(),
-                args.into(),
-                0,
-                env::prepaid_gas() - CREATE_CALL_GAS,
-            )
+            .transfer(env::attached_deposit());
+        if let Some(key) = public_key {
+            promise = promise.add_full_access_key(key.into())
+        }
+        promise.function_call(
+            b"new".to_vec(),
+            args.into(),
+            0,
+            env::prepaid_gas() - CREATE_CALL_GAS,
+        )
     }
 }
 
@@ -63,10 +71,22 @@ mod tests {
 
     #[test]
     fn test_basics() {
-        testing_env!(VMContextBuilder::new().current_account_id(accounts(0)).finish());
+        testing_env!(VMContextBuilder::new()
+            .current_account_id(accounts(0))
+            .finish());
         let mut factory = SputnikDAOFactory::new();
-        testing_env!(VMContextBuilder::new().current_account_id(accounts(0)).attached_deposit(10).finish());
-        factory.create("test".to_string(), "{}".as_bytes().to_vec().into());
-        assert_eq!(factory.get_dao_list(), vec![format!("test.{}", accounts(0))]);
+        testing_env!(VMContextBuilder::new()
+            .current_account_id(accounts(0))
+            .attached_deposit(10)
+            .finish());
+        factory.create(
+            "test".to_string(),
+            Some(Base58PublicKey(vec![])),
+            "{}".as_bytes().to_vec().into(),
+        );
+        assert_eq!(
+            factory.get_dao_list(),
+            vec![format!("test.{}", accounts(0))]
+        );
     }
 }

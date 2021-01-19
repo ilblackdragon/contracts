@@ -24,18 +24,23 @@ Spec for v1:
 Voting policy is a list of amounts and number or percentage of votes required.
 Where the last number in the list is used for all the non payouts (let's call it MAX_VOTE).
 
-Specific voting:
+## Voting rules
+
+Next rules are used for voting:
  - There is a policy that defines for `Payout` proposals at different `amount` how much "YES" votes are required. For non-`Payout` proposals - it's always 1/2 + 1 of council.
  - If there is 0 "NO" votes and given "YES" votes - the expiration date updates to current time + cooldown time.
  - If there is at least 1 "NO" then MAX_VOTE of "YES" votes is required.
  - If there is MAX_VOTE "NO" votes - the proposal gets rejected and bond not returned
- - If there is no super majority and time to withdraw have passed - proposal fails and the bond gets returned. 
+ - If there is no super majority and time to withdraw have passed - proposal fails and the bond gets returned.
 
 For example, voting policy:
   - `[(0, NumOrRation::Ration(1, 2))]` -- meaning that for any amount or vote MAX_VOTE = 1/2 + 1 is used.
   - `[(100, NumOrRation::Number(2)), (10000000, NumOrRation::Ration(2, 3))]` -- if amount is below 100 - 2 votes is enough within grace period. Otherwise MAX_VOTE = 2/3 + 1 to pass any larger proposal or add/remove council members.  
 
-Target audience for v1: [ToDo]
+Specific examples:
+  - If there are 2 councils, with default policy of 50%: proposal needs both of them to vote YES to "Succeed" or both of them to vote NO to be "Rejected". If they vote differently, the vote will be considered "Fail" and `bond` will be returned back to proposer. 
+
+## Use cases
 
  - A person made a cool video about NEAR Wallet, development IDE, etc. They themself or anyone else can suggest to give them a bounty.
  - You saw really cool tweet bashing STATE bill - send that person a bounty (need them to create account though).
@@ -48,7 +53,8 @@ Target audience for v1: [ToDo]
 
 Every guild can fork it and expand how this can be made more inclusive or more sophisticated.
 
-Needs:
+## Needs
+
  - Nice frontend to visualize past and present proposals, creation of proposal, payouts, stats, etc.
  - This needs some form of notification service
 
@@ -110,13 +116,23 @@ near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "descripti
 
 # Proposal to change purpose of this DAO:
 near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": "ChangePurpose", "purpose": "test me well"}}}' --accountId=illia --amount 1
+
+# Proposal to change policy for this DAO, with next voting policy:
+# - up until 100N: just need 2 votes
+# - up until 1000N: need 3 votes
+# - up until 2000N: need 50% + 1 votes
+# - for anything larger or other types of proposals need 66% + 1 of votes
+near call $CONTRACT_ID add_proposal '{"proposal": {"target": "illia", "description": "test", "kind": {"type": "ChangePolicy", "policy": [{"max_amount": "100", "votes": 2}, {"max_amount": "1000", "votes": 3}, {"max_amount": "2000", "votes": [1, 2]}, {"max_amount": "10000000", "votes": [2, 3]}]}}}' --accountId=illia --amount 1
+
+# Finalize a proposal that has no deciding vote and expired.
+near call $CONTRACT_ID finalize '{"id": 4}'
 ```
 
 # Ideas for improving
 
 ## Other tokens
 
-Add support for other tokens in the "bank". 
+Add support for other tokens in the "bank".
 Proposal can then specify amount in a token from whitelisted set.
 There can be internal exchange function as well in case it's needed.
 
