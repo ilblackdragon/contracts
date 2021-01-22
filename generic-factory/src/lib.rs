@@ -9,7 +9,7 @@ static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc:
 const CODE_KEY: &[u8; 4] = b"code";
 
 /// This gas spent on the call & account creation, the rest goes to the `new` call.
-const CREATE_CALL_GAS: u64 = 5_000_000_000_000_000;
+const CREATE_CALL_GAS: u64 = 5_000_000_000_000;
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -26,9 +26,9 @@ impl Default for GenericFactory {
 #[near_bindgen]
 impl GenericFactory {
     #[init]
-    pub fn new(owner: AccountId, code: Base64VecU8) -> Self {
+    pub fn new(#[serializer(borsh)] owner: AccountId, #[serializer(borsh)] code: Vec<u8>) -> Self {
         assert!(!env::state_exists(), "The contract is already initialized");
-        env::storage_write(CODE_KEY, &code.0);
+        env::storage_write(CODE_KEY, &code);
         Self { owner }
     }
 
@@ -45,9 +45,9 @@ impl GenericFactory {
             )
     }
 
-    pub fn upgrade(&self, code: Base64VecU8) {
+    pub fn upgrade(&self, #[serializer(borsh)] code: Vec<u8>) {
         self.assert_owner();
-        env::storage_write(CODE_KEY, &code.0);
+        env::storage_write(CODE_KEY, &code);
     }
 }
 

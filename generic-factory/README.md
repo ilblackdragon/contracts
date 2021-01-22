@@ -15,18 +15,51 @@ Methods:
 
 ## TestNet
 
+### Deploy factory 
+
 ```javascript
 const accountId = "illia";
-const contractName = "factory1.illia";
+const contractName = "factory2.illia";
 const fs = require('fs');
 const account = await near.account(accountId);
-const newArgs = {"owner": accountId, "code": fs.readFileSync("../sputnikdao/res/sputnikdao.wasm").toString('base64')};
+const code = fs.readFileSync("../sputnikdao/res/sputnikdao.wasm");
+// const newArgs = {"owner": accountId, "code": code.toString('base64')};
+// const args = Buffer.from(JSON.stringify(newArgs));
+let lenBuffer = new Buffer.allocUnsafe(4);
+lenBuffer.writeUInt32LE(code.length);
+const args = Buffer.concat([
+    Buffer.from([accountId.length, 0, 0, 0]),
+    Buffer.from(accountId),
+    lenBuffer,
+    code,
+]);
 account.signAndSendTransaction(
     contractName,
     [
         nearAPI.transactions.createAccount(),
         nearAPI.transactions.transfer("100000000000000000000000000"),  
         nearAPI.transactions.deployContract(fs.readFileSync("res/generic_factory.wasm")),
-        nearAPI.transactions.functionCall("new", Buffer.from(JSON.stringify(newArgs)), 210000000000000, "0"),
+        nearAPI.transactions.functionCall("new", args, 210000000000000, "0"),
+    ]);
+```
+
+### Upgrade factory contract
+
+```javascript
+const accountId = "illia";
+const contractName = "factory2.illia";
+const fs = require('fs');
+const account = await near.account(accountId);
+const code = fs.readFileSync("../sputnikdao/res/sputnikdao.wasm");
+let lenBuffer = new Buffer.allocUnsafe(4);
+lenBuffer.writeUInt32LE(code.length);
+const args = Buffer.concat([
+    lenBuffer,
+    code,
+]);
+account.signAndSendTransaction(
+    contractName,
+    [
+        nearAPI.transactions.functionCall("upgrade", args, 210000000000000, "0"),
     ]);
 ```
