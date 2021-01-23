@@ -1,6 +1,5 @@
-use near_sdk::{AccountId, env, Promise};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::{Base64VecU8};
+use near_sdk::{env, AccountId, Promise};
 
 use crate::types::{Duration, Timestamp, WrappedDuration};
 
@@ -14,7 +13,7 @@ pub trait Ownable {
 
 pub trait Upgradable {
     fn get_staging_duration(&self) -> WrappedDuration;
-    fn stage_code(&mut self, code: Base64VecU8, timestamp: Timestamp);
+    fn stage_code(&mut self, code: Vec<u8>, timestamp: Timestamp);
     fn deploy_code(&mut self) -> Promise;
 
     /// Implement migration for the next version.
@@ -58,17 +57,26 @@ impl Upgradable for Upgrade {
         self.staging_duration.into()
     }
 
-    fn stage_code(&mut self, code: Base64VecU8, timestamp: Timestamp) {
+    fn stage_code(&mut self, code: Vec<u8>, timestamp: Timestamp) {
         self.assert_owner();
-        assert!(env::block_timestamp() + self.staging_duration < timestamp, "Timestamp must be later than staging duration");
+        assert!(
+            env::block_timestamp() + self.staging_duration < timestamp,
+            "Timestamp must be later than staging duration"
+        );
         // Writes directly into storage to avoid serialization penalty by using default struct.
-        env::storage_write(b"upgrade", &code.0);
+        env::storage_write(b"upgrade", &code);
         self.staging_timestamp = timestamp;
     }
 
     fn deploy_code(&mut self) -> Promise {
         if self.staging_timestamp < env::block_timestamp() {
-            env::panic(&format!("Deploy code too early: staging ends on {}", self.staging_timestamp + self.staging_duration).into_bytes());
+            env::panic(
+                &format!(
+                    "Deploy code too early: staging ends on {}",
+                    self.staging_timestamp + self.staging_duration
+                )
+                .into_bytes(),
+            );
         }
         let code = env::storage_read(b"upgrade").expect("No upgrade code available");
         env::storage_remove(b"upgrade");
