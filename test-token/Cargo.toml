@@ -18,15 +18,5 @@ panic = "abort"
 overflow-checks = true
 
 [dependencies]
-near-sdk = "2.0.0"
-near-lib = { path = "../near-lib-rs" }
-
-[dev-dependencies]
-lazy_static = "1.4.0"
-quickcheck = "0.9"
-quickcheck_macros = "0.9"
-log = "0.4"
-env_logger = { version = "0.7.1", default-features = false }
-near-crypto = { git = "https://github.com/nearprotocol/nearcore.git" }
-near-primitives = { git = "https://github.com/nearprotocol/nearcore.git" }
-near-runtime-standalone = { git = "https://github.com/nearprotocol/nearcore.git" }
+near-sdk = { git = "https://github.com/near/near-sdk-rs", rev = "dfbf61ceb23bc321afa6d0dbce913d744ab25568" }
+near-contract-standards = { git = "https://github.com/near/near-sdk-rs", rev = "dfbf61ceb23bc321afa6d0dbce913d744ab25568" }

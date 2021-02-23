@@ -1,73 +1,115 @@
+use near_contract_standards::fungible_token::{
+    FungibleToken, FungibleTokenCore, FungibleTokenMetadata, FungibleTokenMetadataProvider,
+};
+use near_contract_standards::storage_manager::{AccountStorageBalance, StorageManager};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::U128;
-use near_sdk::{env, near_bindgen, AccountId};
-
-use near_lib::token::{FungibleToken, Token};
-
-#[global_allocator]
-static ALLOC: near_sdk::wee_alloc::WeeAlloc<'_> = near_sdk::wee_alloc::WeeAlloc::INIT;
+use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::{near_bindgen, PanicOnDefault, Promise};
 
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct TToken {
-    token: Token,
-}
-
-impl Default for TToken {
-    fn default() -> Self {
-        panic!("Test token should be initialized before usage")
-    }
+#[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
+struct Contract {
+    token: FungibleToken,
 }
 
 #[near_bindgen]
-impl TToken {
-    /// Initializes the contract with the given total supply owned by the given `owner_id`.
+impl Contract {
     #[init]
-    pub fn new(owner_id: AccountId, total_supply: U128) -> Self {
-        let total_supply = total_supply.into();
-        assert!(!env::state_exists(), "Already initialized");
+    pub fn new() -> Self {
         Self {
-            token: Token::new(owner_id, total_supply),
+            token: FungibleToken::new(),
         }
     }
 
-    pub fn mint(&mut self, account_id: AccountId, amount: U128) {
-        self.token.mint(account_id, amount.into());
+    pub fn mint(&mut self, account_id: ValidAccountId, amount: U128) {
+        self.token
+            .internal_deposit(account_id.as_ref(), amount.into());
     }
 }
 
 #[near_bindgen]
-impl FungibleToken for TToken {
+impl FungibleTokenCore for Contract {
     #[payable]
-    fn inc_allowance(&mut self, escrow_account_id: String, amount: U128) {
-        self.token.inc_allowance(escrow_account_id, amount.into());
-    }
-
-    #[payable]
-    fn dec_allowance(&mut self, escrow_account_id: String, amount: U128) {
-        self.token.dec_allowance(escrow_account_id, amount.into());
+    fn ft_transfer(&mut self, receiver_id: ValidAccountId, amount: U128, memo: Option<String>) {
+        self.token.ft_transfer(receiver_id, amount, memo)
     }
 
     #[payable]
-    fn transfer_from(&mut self, owner_id: String, new_owner_id: String, amount: U128) {
-        self.token
-            .transfer_from(owner_id, new_owner_id, amount.into());
+    fn ft_transfer_call(
+        &mut self,
+        receiver_id: ValidAccountId,
+        amount: U128,
+        msg: String,
+        memo: Option<String>,
+    ) -> Promise {
+        self.token.ft_transfer_call(receiver_id, amount, msg, memo)
+    }
+
+    fn ft_total_supply(&self) -> U128 {
+        self.token.ft_total_supply()
+    }
+
+    fn ft_balance_of(&self, account_id: ValidAccountId) -> U128 {
+        self.token.ft_balance_of(account_id)
+    }
+}
+
+#[near_bindgen]
+impl StorageManager for Contract {
+    #[payable]
+    fn storage_deposit(&mut self, account_id: Option<ValidAccountId>) -> AccountStorageBalance {
+        self.token.storage_deposit(account_id)
     }
 
     #[payable]
-    fn transfer(&mut self, new_owner_id: String, amount: U128) {
-        self.token.transfer(new_owner_id, amount.into());
+    fn storage_withdraw(&mut self, amount: U128) -> AccountStorageBalance {
+        self.token.storage_withdraw(amount)
     }
 
-    fn get_total_supply(&self) -> U128 {
-        self.token.get_total_supply().into()
+    fn storage_minimum_balance(&self) -> U128 {
+        self.token.storage_minimum_balance()
     }
 
-    fn get_balance(&self, owner_id: String) -> U128 {
-        self.token.get_balance(owner_id).into()
+    fn storage_balance_of(&self, account_id: ValidAccountId) -> AccountStorageBalance {
+        self.token.storage_balance_of(account_id)
     }
+}
 
-    fn get_allowance(&self, owner_id: String, escrow_account_id: String) -> U128 {
-        self.token.get_allowance(owner_id, escrow_account_id).into()
+#[near_bindgen]
+impl FungibleTokenMetadataProvider for Contract {
+    fn ft_metadata() -> FungibleTokenMetadata {
+        unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use near_sdk::test_utils::{accounts, VMContextBuilder};
+    use near_sdk::{env, testing_env, MockedBlockchain};
+
+    use super::*;
+
+    #[test]
+    fn test_basics() {
+        let mut context = VMContextBuilder::new();
+        testing_env!(context.build());
+        let mut contract = Contract::new();
+        testing_env!(context
+            .attached_deposit(125 * env::storage_byte_cost())
+            .build());
+        contract.storage_deposit(Some(accounts(0)));
+        contract.mint(accounts(0), 1_000_000.into());
+        assert_eq!(contract.ft_balance_of(accounts(0)), 1_000_000.into());
+
+        testing_env!(context
+            .attached_deposit(125 * env::storage_byte_cost())
+            .build());
+        contract.storage_deposit(Some(accounts(1)));
+        testing_env!(context
+            .attached_deposit(1)
+            .predecessor_account_id(accounts(0))
+            .build());
+        contract.ft_transfer(accounts(1), 1_000.into(), None);
+        assert_eq!(contract.ft_balance_of(accounts(1)), 1_000.into());
     }
 }
