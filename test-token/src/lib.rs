@@ -4,7 +4,7 @@ use near_contract_standards::fungible_token::{
 use near_contract_standards::storage_manager::{AccountStorageBalance, StorageManager};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{near_bindgen, PanicOnDefault, Promise};
+use near_sdk::{env, near_bindgen, PanicOnDefault, Promise};
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
@@ -16,6 +16,7 @@ struct Contract {
 impl Contract {
     #[init]
     pub fn new() -> Self {
+        assert!(!env::state_exists(), "ERR_CONTRACT_IS_INITIALIZED");
         Self {
             token: FungibleToken::new(),
         }
@@ -24,6 +25,11 @@ impl Contract {
     pub fn mint(&mut self, account_id: ValidAccountId, amount: U128) {
         self.token
             .internal_deposit(account_id.as_ref(), amount.into());
+    }
+
+    pub fn burn(&mut self, account_id: ValidAccountId, amount: U128) {
+        self.token
+            .internal_withdraw(account_id.as_ref(), amount.into());
     }
 }
 
@@ -111,5 +117,8 @@ mod tests {
             .build());
         contract.ft_transfer(accounts(1), 1_000.into(), None);
         assert_eq!(contract.ft_balance_of(accounts(1)), 1_000.into());
+
+        contract.burn(accounts(1), 500.into());
+        assert_eq!(contract.ft_balance_of(accounts(1)), 500.into());
     }
 }
