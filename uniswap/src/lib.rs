@@ -55,8 +55,44 @@ impl Contract {
         );
     }
 
-    pub fn remove_liquidity(&mut self, _shares: Balance) {
-        // TODO
+    pub fn remove_liquidity(
+        &mut self,
+        shares: U128,
+        min_near_amount: U128,
+        min_token_amount: U128,
+    ) -> Promise {
+        let shares_amount: u128 = shares.into();
+        assert!(shares_amount > 0 && self.shares_total_supply > 0);
+        let near_amount = (shares_amount as f64 * self.near_amount as f64
+            / self.shares_total_supply as f64)
+            .floor() as u128;
+        let token_amount = (shares_amount as f64 * self.token_amount as f64
+            / self.shares_total_supply as f64)
+            .floor() as u128;
+        assert!(near_amount >= min_near_amount.into() && token_amount >= min_token_amount.into());
+        let account_id = env::predecessor_account_id();
+        let prev_amount = self.shares.get(&account_id).unwrap_or(0);
+        assert!(prev_amount >= shares_amount, "ERR_NOT_ENOUGH_SHARES");
+        // TODO: don't allow to withdraw and leave less than required for storage.
+        if prev_amount == shares_amount {
+            self.shares.remove(&account_id);
+        } else {
+            self.shares
+                .insert(&account_id, &(prev_amount - shares_amount));
+        }
+        self.shares_total_supply -= shares_amount;
+        self.near_amount -= near_amount;
+        self.token_amount -= token_amount;
+        Promise::new(account_id.clone()).transfer(near_amount);
+        // TODO: handle error on transfer.
+        ext_fungible_token::ft_transfer(
+            account_id.try_into().unwrap(),
+            U128(token_amount),
+            None,
+            &self.token_account_id,
+            NO_DEPOSIT,
+            env::prepaid_gas() - GAS_FOR_SWAP,
+        )
     }
 
     /// Pricing between two reserves given input amount.
@@ -145,7 +181,7 @@ impl Contract {
                 "ERR_NOT_ENOUGH_TOKEN"
             );
             let liquidity_minted = near_amount * self.shares_total_supply / self.near_amount;
-            add_to_collection(&mut self.near_balances, sender_id, liquidity_minted);
+            add_to_collection(&mut self.shares, sender_id, liquidity_minted);
             self.shares_total_supply += liquidity_minted;
             self.near_amount += near_amount;
             self.token_amount += expected_token_amount;
@@ -154,9 +190,16 @@ impl Contract {
             self.shares_total_supply = near_amount;
             self.near_amount = near_amount;
             self.token_amount = amount.into();
-            add_to_collection(&mut self.near_balances, sender_id, near_amount);
+            add_to_collection(&mut self.shares, sender_id, near_amount);
             amount
         }
+    }
+
+    pub fn shares_balance(&self, account_id: ValidAccountId) -> U128 {
+        self.shares
+            .get(account_id.as_ref())
+            .unwrap_or_default()
+            .into()
     }
 }
 
@@ -250,5 +293,12 @@ mod tests {
 
         assert_eq!(contract.near_amount, 6 * one_near);
         assert_eq!(contract.token_amount, 10 * one_near - result);
+
+        testing_env!(context.predecessor_account_id(accounts(0)).build());
+        contract.remove_liquidity(contract.shares_balance(accounts(0)), 1.into(), 1.into());
+
+        // Amounts are almost 0
+        assert!(contract.near_amount < 10u128.pow(10));
+        assert!(contract.token_amount < 10u128.pow(10));
     }
 }
