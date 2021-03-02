@@ -1,0 +1,23 @@
+[package]
+name = "multiswap"
+version = "0.1.0"
+authors = ["Illia Polosukhin <illia.polosukhin@gmail.com>"]
+edition = "2018"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+codegen-units = 1
+# Tell `rustc` to optimize for small code size.
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+
+[dependencies]
+near-sdk = { git = "https://github.com/near/near-sdk-rs", rev = "dfbf61ceb23bc321afa6d0dbce913d744ab25568" }
+near-contract-standards = { git = "https://github.com/near/near-sdk-rs", rev = "dfbf61ceb23bc321afa6d0dbce913d744ab25568" }
+uint = { version = "0.9.0", default-features = false }

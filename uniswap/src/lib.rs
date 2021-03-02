@@ -16,6 +16,7 @@ construct_uint! {
     /// 256-bit unsigned integer.
     pub struct U256(4);
 }
+
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
 struct Contract {
