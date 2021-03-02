@@ -20,3 +20,4 @@ overflow-checks = true
 [dependencies]
 near-sdk = { git = "https://github.com/near/near-sdk-rs", rev = "dfbf61ceb23bc321afa6d0dbce913d744ab25568" }
 near-contract-standards = { git = "https://github.com/near/near-sdk-rs", rev = "dfbf61ceb23bc321afa6d0dbce913d744ab25568" }
+uint = { version = "0.9.0", default-features = false }

@@ -1,15 +1,21 @@
+use std::convert::TryInto;
+
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
     env, ext_contract, near_bindgen, serde_json, AccountId, Balance, Gas, PanicOnDefault, Promise,
 };
-use std::convert::TryInto;
+use uint::construct_uint;
 
 const FEE_DIVISOR: u32 = 1_000;
 const NO_DEPOSIT: Balance = 0;
 const GAS_FOR_SWAP: Gas = 10_000_000_000_000;
 
+construct_uint! {
+    /// 256-bit unsigned integer.
+    pub struct U256(4);
+}
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
 struct Contract {
@@ -33,6 +39,7 @@ impl Contract {
     #[init]
     pub fn new(token_account_id: ValidAccountId, fee: u32) -> Self {
         assert!(!env::state_exists(), "ERR_CONTRACT_IS_INITIALIZED");
+        assert!(fee < FEE_DIVISOR, "ERR_FEE_TOO_LARGE");
         Self {
             token_account_id: token_account_id.into(),
             fee,
@@ -63,12 +70,12 @@ impl Contract {
     ) -> Promise {
         let shares_amount: u128 = shares.into();
         assert!(shares_amount > 0 && self.shares_total_supply > 0);
-        let near_amount = (shares_amount as f64 * self.near_amount as f64
-            / self.shares_total_supply as f64)
-            .floor() as u128;
-        let token_amount = (shares_amount as f64 * self.token_amount as f64
-            / self.shares_total_supply as f64)
-            .floor() as u128;
+        let near_amount = (U256::from(shares_amount) * U256::from(self.near_amount)
+            / U256::from(self.shares_total_supply))
+        .as_u128();
+        let token_amount = (U256::from(shares_amount) * U256::from(self.token_amount)
+            / U256::from(self.shares_total_supply))
+        .as_u128();
         assert!(near_amount >= min_near_amount.into() && token_amount >= min_token_amount.into());
         let account_id = env::predecessor_account_id();
         let prev_amount = self.shares.get(&account_id).unwrap_or(0);
@@ -103,10 +110,10 @@ impl Contract {
         output_reserve: Balance,
     ) -> Balance {
         assert!(input_reserve > 0 && output_reserve > 0, "ERR_NO_LIQUIDITY");
-        let input_amount_with_fee = input_amount as f64 * (FEE_DIVISOR - self.fee) as f64;
-        ((input_amount_with_fee * output_reserve as f64)
-            / (input_reserve as f64 * FEE_DIVISOR as f64 + input_amount_with_fee))
-            .floor() as u128
+        let input_amount_with_fee = U256::from(input_amount) * U256::from(FEE_DIVISOR - self.fee);
+        ((input_amount_with_fee * U256::from(output_reserve))
+            / (U256::from(input_reserve) * U256::from(FEE_DIVISOR) + input_amount_with_fee))
+            .as_u128()
     }
 
     /// Pricing between two reserves to return given output amount.
@@ -120,11 +127,9 @@ impl Contract {
             input_reserve > 0 && output_reserve > output_amount,
             "ERR_NO_LIQUIDITY"
         );
-        ((input_reserve as f64 * output_amount as f64 * FEE_DIVISOR as f64)
-            / ((output_reserve - output_amount) as f64 * (FEE_DIVISOR - self.fee) as f64))
-            .ceil() as u128
-        // (input_reserve * output_amount * self.fee as u128)
-        //     / ((output_reserve - output_amount) * FEE_DIVISOR as u128)
+        ((U256::from(input_reserve) * U256::from(output_amount) * U256::from(FEE_DIVISOR))
+            / (U256::from(output_reserve - output_amount) * U256::from(FEE_DIVISOR - self.fee)))
+        .as_u128()
     }
 
     /// Returns price of given amount of NEAR in token.
@@ -284,21 +289,21 @@ mod tests {
         );
 
         let price = contract.get_near_to_token_price(one_near);
-        assert_eq!(price, 557227237267357694951424);
+        assert_eq!(price, 557227237267357628440878);
         let price = contract.get_token_to_near_price(one_near);
-        assert_eq!(price, 2507522567703109526618112);
+        assert_eq!(price, 2507522567703109327983951);
 
+        // Swap 1N for tokens, check that pool has 1N more and result tokens less.
         testing_env!(context.attached_deposit(one_near).build());
         let result = contract.swap_near_to_token(1);
 
         assert_eq!(contract.near_amount, 6 * one_near);
         assert_eq!(contract.token_amount, 10 * one_near - result);
 
+        // Withdraw all liquidity, check that nothing left.
         testing_env!(context.predecessor_account_id(accounts(0)).build());
         contract.remove_liquidity(contract.shares_balance(accounts(0)), 1.into(), 1.into());
-
-        // Amounts are almost 0
-        assert!(contract.near_amount < 10u128.pow(10));
-        assert!(contract.token_amount < 10u128.pow(10));
+        assert_eq!(contract.near_amount, 0);
+        assert_eq!(contract.token_amount, 0);
     }
 }
