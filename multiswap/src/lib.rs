@@ -4,7 +4,8 @@ use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{env, near_bindgen, serde_json, AccountId, Balance, PanicOnDefault};
 use uint::construct_uint;
 
-use crate::pool::{add_to_collection, Pool};
+use crate::pool::{add_to_collection, ext_fungible_token, Pool, GAS_FOR_FT_TRANSFER, NO_DEPOSIT};
+use std::convert::TryInto;
 
 mod pool;
 
@@ -19,6 +20,10 @@ struct Contract {
     pools: Vector<Pool>,
     /// Balances of liquidity adding in progress in the form of "<token_id>:<account_id>".
     liquidity_amounts: LookupMap<String, Balance>,
+}
+
+pub fn token_account_key(token_id: &AccountId, account_id: &AccountId) -> String {
+    format!("{}:{}", token_id, account_id)
 }
 
 #[near_bindgen]
@@ -43,7 +48,7 @@ impl Contract {
     fn deposit(&mut self, sender_id: &AccountId, token_id: &AccountId, amount: Balance) {
         add_to_collection(
             &mut self.liquidity_amounts,
-            &format!("{}:{}", token_id, sender_id),
+            &token_account_key(token_id, sender_id),
             amount,
         );
     }
@@ -52,10 +57,11 @@ impl Contract {
         let sender_id = env::predecessor_account_id();
         let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
         let mut amounts = Vec::new();
+        // TODO: Handle storage.
         for token_id in pool.tokens() {
             amounts.push(
                 self.liquidity_amounts
-                    .remove(&format!("{}:{}", token_id, sender_id))
+                    .remove(&token_account_key(token_id, &sender_id))
                     .expect("ERR_MISSING_TOKEN"),
             );
         }
@@ -63,10 +69,12 @@ impl Contract {
         self.pools.replace(pool_id, &pool);
     }
 
+    /// Remove liquidity from the pool into general pool of liquidity.
     pub fn remove_liquidity(&mut self, pool_id: u64, shares: U128, min_amounts: Vec<U128>) {
+        let sender_id = env::predecessor_account_id();
         let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        pool.remove_liquidity(
-            env::predecessor_account_id(),
+        let amounts = pool.remove_liquidity(
+            &sender_id,
             shares.into(),
             min_amounts
                 .into_iter()
@@ -74,6 +82,50 @@ impl Contract {
                 .collect(),
         );
         self.pools.replace(pool_id, &pool);
+        let tokens = pool.tokens();
+        for i in 0..tokens.len() {
+            add_to_collection(
+                &mut self.liquidity_amounts,
+                &token_account_key(&tokens[i], &sender_id),
+                amounts[i],
+            );
+        }
+    }
+
+    /// Withdraws given token from the free funds of given user.
+    pub fn withdraw(&mut self, token_id: ValidAccountId, amount: U128) {
+        let amount: u128 = amount.into();
+        let sender_id = env::predecessor_account_id();
+        let key = token_account_key(token_id.as_ref(), &sender_id);
+        let available_amount = self.liquidity_amounts.get(&key).expect("ERR_MISSING_TOKEN");
+        assert!(available_amount >= amount, "ERR_NOT_ENOUGH");
+        // TODO: Handle storage.
+        if available_amount == amount {
+            self.liquidity_amounts.remove(&key);
+        } else {
+            self.liquidity_amounts
+                .insert(&key, &(available_amount - amount));
+        }
+        ext_fungible_token::ft_transfer(
+            sender_id.try_into().unwrap(),
+            amount.into(),
+            None,
+            token_id.as_ref(),
+            NO_DEPOSIT,
+            GAS_FOR_FT_TRANSFER,
+        );
+    }
+
+    pub fn get_return(
+        &self,
+        pool_id: u64,
+        token_in: ValidAccountId,
+        amount_in: U128,
+        token_out: ValidAccountId,
+    ) -> U128 {
+        let pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
+        pool.get_return(token_in, amount_in.into(), token_out)
+            .into()
     }
 }
 
