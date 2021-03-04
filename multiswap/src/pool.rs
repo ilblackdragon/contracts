@@ -4,7 +4,8 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{ext_contract, AccountId, Balance, Gas};
-use uint::construct_uint;
+
+use crate::utils::{add_to_collection, U256};
 
 const FEE_DIVISOR: u32 = 1_000;
 const MAX_NUM_TOKENS: usize = 10;
@@ -13,19 +14,9 @@ const INIT_SHARES_SUPPLY: u128 = 1_000_000_000_000_000_000_000;
 pub const GAS_FOR_FT_TRANSFER: Gas = 10_000_000_000_000;
 pub const NO_DEPOSIT: Balance = 0;
 
-construct_uint! {
-    /// 256-bit unsigned integer.
-    pub struct U256(4);
-}
-
 #[ext_contract(ext_fungible_token)]
 pub trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
-}
-
-pub fn add_to_collection(c: &mut LookupMap<AccountId, Balance>, key: &String, amount: Balance) {
-    let prev_amount = c.get(key).unwrap_or(0);
-    c.insert(key, &(prev_amount + amount));
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -59,12 +50,20 @@ impl Pool {
         }
     }
 
+    pub fn share_balances(&self, account_id: &AccountId) -> Balance {
+        self.shares.get(account_id).unwrap_or_default()
+    }
+
+    pub fn share_total_balance(&self) -> Balance {
+        self.shares_total_supply
+    }
+
     pub fn tokens(&self) -> &[AccountId] {
         &self.token_account_ids
     }
 
     /// Adds token to liquidity pool.
-    pub fn add_liquidity(&mut self, sender_id: AccountId, amounts: Vec<Balance>) -> Balance {
+    pub fn add_liquidity(&mut self, sender_id: &AccountId, amounts: Vec<Balance>) -> Balance {
         assert_eq!(
             amounts.len(),
             self.token_account_ids.len(),
@@ -205,7 +204,8 @@ mod tests {
         context.predecessor_account_id(accounts(0));
         testing_env!(context.build());
         let mut pool = Pool::new(0, vec![accounts(1), accounts(2)], 3);
-        let num_shares = pool.add_liquidity(accounts(0).into(), vec![5 * one_near, 10 * one_near]);
+        let num_shares =
+            pool.add_liquidity(accounts(0).as_ref(), vec![5 * one_near, 10 * one_near]);
         pool.swap(
             accounts(0).as_ref(),
             accounts(1).as_ref(),
