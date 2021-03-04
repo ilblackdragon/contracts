@@ -1,10 +1,12 @@
-use near_contract_standards::fungible_token::{
-    FungibleToken, FungibleTokenCore, FungibleTokenMetadata, FungibleTokenMetadataProvider,
+use near_contract_standards::fungible_token::metadata::{
+    FungibleTokenMetadata, FungibleTokenMetadataProvider,
 };
-use near_contract_standards::storage_manager::{AccountStorageBalance, StorageManager};
+use near_contract_standards::fungible_token::FungibleToken;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{env, near_bindgen, PanicOnDefault, Promise};
+use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, PromiseOrValue};
+
+near_sdk::setup_alloc!();
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
@@ -18,7 +20,7 @@ impl Contract {
     pub fn new() -> Self {
         assert!(!env::state_exists(), "ERR_CONTRACT_IS_INITIALIZED");
         Self {
-            token: FungibleToken::new(),
+            token: FungibleToken::new(b"t"),
         }
     }
 
@@ -33,57 +35,12 @@ impl Contract {
     }
 }
 
-#[near_bindgen]
-impl FungibleTokenCore for Contract {
-    #[payable]
-    fn ft_transfer(&mut self, receiver_id: ValidAccountId, amount: U128, memo: Option<String>) {
-        self.token.ft_transfer(receiver_id, amount, memo)
-    }
-
-    #[payable]
-    fn ft_transfer_call(
-        &mut self,
-        receiver_id: ValidAccountId,
-        amount: U128,
-        msg: String,
-        memo: Option<String>,
-    ) -> Promise {
-        self.token.ft_transfer_call(receiver_id, amount, msg, memo)
-    }
-
-    fn ft_total_supply(&self) -> U128 {
-        self.token.ft_total_supply()
-    }
-
-    fn ft_balance_of(&self, account_id: ValidAccountId) -> U128 {
-        self.token.ft_balance_of(account_id)
-    }
-}
-
-#[near_bindgen]
-impl StorageManager for Contract {
-    #[payable]
-    fn storage_deposit(&mut self, account_id: Option<ValidAccountId>) -> AccountStorageBalance {
-        self.token.storage_deposit(account_id)
-    }
-
-    #[payable]
-    fn storage_withdraw(&mut self, amount: U128) -> AccountStorageBalance {
-        self.token.storage_withdraw(amount)
-    }
-
-    fn storage_minimum_balance(&self) -> U128 {
-        self.token.storage_minimum_balance()
-    }
-
-    fn storage_balance_of(&self, account_id: ValidAccountId) -> AccountStorageBalance {
-        self.token.storage_balance_of(account_id)
-    }
-}
+near_contract_standards::impl_fungible_token_core!(Contract, token);
+near_contract_standards::impl_fungible_token_ar!(Contract, token);
 
 #[near_bindgen]
 impl FungibleTokenMetadataProvider for Contract {
-    fn ft_metadata() -> FungibleTokenMetadata {
+    fn ft_metadata(&self) -> FungibleTokenMetadata {
         unimplemented!()
     }
 }
@@ -103,14 +60,14 @@ mod tests {
         testing_env!(context
             .attached_deposit(125 * env::storage_byte_cost())
             .build());
-        contract.storage_deposit(Some(accounts(0)));
+        contract.ar_register(Some(accounts(0)));
         contract.mint(accounts(0), 1_000_000.into());
         assert_eq!(contract.ft_balance_of(accounts(0)), 1_000_000.into());
 
         testing_env!(context
             .attached_deposit(125 * env::storage_byte_cost())
             .build());
-        contract.storage_deposit(Some(accounts(1)));
+        contract.ar_register(Some(accounts(1)));
         testing_env!(context
             .attached_deposit(1)
             .predecessor_account_id(accounts(0))
