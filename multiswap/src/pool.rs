@@ -3,16 +3,15 @@ use std::cmp::min;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{ext_contract, AccountId, Balance, Gas};
+use near_sdk::{env, ext_contract, AccountId, Balance, Gas};
 
 use crate::utils::{add_to_collection, U256};
 
 const FEE_DIVISOR: u32 = 1_000;
 const MAX_NUM_TOKENS: usize = 10;
-const INIT_SHARES_SUPPLY: u128 = 1_000_000_000_000_000_000_000;
+const INIT_SHARES_SUPPLY: u128 = 1_000_000_000_000_000_000_000_000;
 
 pub const GAS_FOR_FT_TRANSFER: Gas = 10_000_000_000_000;
-pub const NO_DEPOSIT: Balance = 0;
 
 #[ext_contract(ext_fungible_token)]
 pub trait FungibleToken {
@@ -22,15 +21,15 @@ pub trait FungibleToken {
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Pool {
     /// List of tokens in the pool.
-    token_account_ids: Vec<AccountId>,
+    pub token_account_ids: Vec<AccountId>,
     /// How much NEAR this contract has.
-    amounts: Vec<Balance>,
+    pub amounts: Vec<Balance>,
     /// Fee charged for swap.
-    fee: u32,
+    pub fee: u32,
     /// Shares of the pool by liquidity providers.
-    shares: LookupMap<AccountId, Balance>,
+    pub shares: LookupMap<AccountId, Balance>,
     /// Total number of shares.
-    shares_total_supply: Balance,
+    pub shares_total_supply: Balance,
 }
 
 impl Pool {
@@ -163,7 +162,6 @@ impl Pool {
     /// Assuming that `token_amount_in` was already received from `sender_id`.
     pub fn swap(
         &mut self,
-        sender_id: &AccountId,
         token_in: &AccountId,
         amount_in: Balance,
         token_out: &AccountId,
@@ -172,19 +170,17 @@ impl Pool {
         let in_idx = self.token_index(token_in);
         let out_idx = self.token_index(token_out);
         let amount_out = self.get_return_idx(in_idx, amount_in, out_idx);
+        env::log(
+            format!(
+                "Swapped {} {} for {} {}",
+                amount_in, token_in, amount_out, token_out
+            )
+            .as_bytes(),
+        );
         assert!(amount_out >= min_amount_out, "ERR_MIN_AMOUNT");
 
         self.amounts[in_idx] += amount_in;
         self.amounts[out_idx] -= amount_out;
-
-        ext_fungible_token::ft_transfer(
-            sender_id.clone(),
-            U128(amount_out),
-            None,
-            &self.token_account_ids[out_idx],
-            NO_DEPOSIT,
-            GAS_FOR_FT_TRANSFER,
-        );
 
         amount_out
     }
@@ -206,13 +202,7 @@ mod tests {
         let mut pool = Pool::new(0, vec![accounts(1), accounts(2)], 3);
         let num_shares =
             pool.add_liquidity(accounts(0).as_ref(), vec![5 * one_near, 10 * one_near]);
-        pool.swap(
-            accounts(0).as_ref(),
-            accounts(1).as_ref(),
-            one_near,
-            accounts(2).as_ref(),
-            1,
-        );
+        pool.swap(accounts(1).as_ref(), one_near, accounts(2).as_ref(), 1);
         pool.remove_liquidity(accounts(0).as_ref(), num_shares, vec![1, 1]);
     }
 }

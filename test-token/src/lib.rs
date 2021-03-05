@@ -10,7 +10,7 @@ near_sdk::setup_alloc!();
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
-struct Contract {
+pub struct Contract {
     token: FungibleToken,
 }
 
@@ -25,6 +25,7 @@ impl Contract {
     }
 
     pub fn mint(&mut self, account_id: ValidAccountId, amount: U128) {
+        self.token.internal_register_account(account_id.as_ref());
         self.token
             .internal_deposit(account_id.as_ref(), amount.into());
     }

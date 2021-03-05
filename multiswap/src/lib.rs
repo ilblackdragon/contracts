@@ -5,13 +5,17 @@ use near_contract_standards::account_registration::AccountRegistrar;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, Vector};
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{env, log, near_bindgen, serde_json, AccountId, Balance, PanicOnDefault, Promise};
+use near_sdk::{
+    assert_one_yocto, env, log, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
+};
 
-use crate::pool::{ext_fungible_token, Pool, GAS_FOR_FT_TRANSFER, NO_DEPOSIT};
-use crate::utils::FungibleTokenReceiver;
+use crate::pool::{ext_fungible_token, Pool, GAS_FOR_FT_TRANSFER};
+pub use crate::views::PoolInfo;
 
 mod pool;
+mod token_receiver;
 mod utils;
+mod views;
 
 near_sdk::setup_alloc!();
 
@@ -22,7 +26,7 @@ const BYTES_PER_DEPOSIT_RECORD: u128 =
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
-struct Contract {
+pub struct Contract {
     pools: Vector<Pool>,
     /// Balances of deposited tokens for each account.
     deposited_amounts: LookupMap<AccountId, HashMap<AccountId, Balance>>,
@@ -77,25 +81,60 @@ impl Contract {
             .clone()
     }
 
+    /// Returns current balance of given token for given user. If there is nothing recorded, returns 0.
     fn internal_get_deposit(&self, sender_id: &AccountId, token_id: &AccountId) -> Balance {
         self.internal_get_deposits(sender_id)
             .get(token_id)
-            .expect("ERR_NO_DEPOSIT_TOKEN")
-            .clone()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn swap(
+        &mut self,
+        pool_id: u64,
+        token_in: ValidAccountId,
+        amount_in: U128,
+        token_out: ValidAccountId,
+        min_amount_out: U128,
+    ) -> U128 {
+        let sender_id = env::predecessor_account_id();
+        let prev_amount_in = self.internal_get_deposit(&sender_id, token_in.as_ref());
+        let prev_amount_out = self.internal_get_deposit(&sender_id, token_out.as_ref());
+        let amount_in: u128 = amount_in.into();
+        assert!(amount_in <= prev_amount_in, "ERR_NOT_ENOUGH_DEPOSIT");
+        let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
+        let amount_out = pool.swap(
+            token_in.as_ref(),
+            amount_in,
+            token_out.as_ref(),
+            min_amount_out.into(),
+        );
+        self.internal_deposit(&sender_id, token_in.as_ref(), prev_amount_in - amount_in);
+        self.internal_deposit(&sender_id, token_out.as_ref(), prev_amount_out + amount_out);
+        self.pools.replace(pool_id, &pool);
+        amount_out.into()
     }
 
     /// Add liquidity from already deposited amounts to given pool.
-    pub fn add_liquidity(&mut self, pool_id: u64) {
+    pub fn add_liquidity(&mut self, pool_id: u64, amounts: Vec<U128>) {
         let sender_id = env::predecessor_account_id();
+        let amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
         let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        let mut amounts = Vec::new();
         let mut deposits = self.internal_get_deposits(&sender_id);
-        for token_id in pool.tokens() {
-            amounts.push(
-                deposits
-                    .remove(token_id)
-                    .expect(&format!("ERR_MISSING_TOKEN:{}", token_id)),
+        let tokens = pool.tokens();
+        for i in 0..tokens.len() {
+            let amount = *deposits
+                .get(&tokens[i])
+                .expect(&format!("ERR_MISSING_TOKEN:{}", tokens[i]));
+            assert!(
+                amounts[i] <= amount,
+                format!("ERR_NOT_ENOUGH_TOKEN:{}", tokens[i])
             );
+            if amounts[i] == amount {
+                deposits.remove(&tokens[i]);
+            } else {
+                deposits.insert(tokens[i].clone(), amount - amounts[i]);
+            }
         }
         pool.add_liquidity(&sender_id, amounts);
         self.deposited_amounts.insert(&sender_id, &deposits);
@@ -123,37 +162,10 @@ impl Contract {
         self.deposited_amounts.insert(&sender_id, &deposits);
     }
 
-    pub fn get_pool_shares(&self, pool_id: u64, account_id: ValidAccountId) -> U128 {
-        self.pools
-            .get(pool_id)
-            .expect("ERR_NO_POOL")
-            .share_balances(account_id.as_ref())
-            .into()
-    }
-
-    pub fn get_pool_total_shares(&self, pool_id: u64) -> U128 {
-        self.pools
-            .get(pool_id)
-            .expect("ERR_NO_POOL")
-            .share_total_balance()
-            .into()
-    }
-
-    /// Returns balances of the deposits for given user.
-    pub fn get_deposits(&self, account_id: &AccountId) -> HashMap<AccountId, U128> {
-        self.internal_get_deposits(account_id)
-            .into_iter()
-            .map(|(acc, bal)| (acc, U128(bal)))
-            .collect()
-    }
-
-    /// Returns balance of the deposit for given user.
-    pub fn get_deposit(&self, account_id: &AccountId, token_id: &AccountId) -> U128 {
-        self.internal_get_deposit(account_id, token_id).into()
-    }
-
     /// Withdraws given token from the deposits of given user.
+    #[payable]
     pub fn withdraw(&mut self, token_id: ValidAccountId, amount: U128) {
+        assert_one_yocto();
         let amount: u128 = amount.into();
         let sender_id = env::predecessor_account_id();
         let mut deposits = self.deposited_amounts.get(&sender_id).unwrap();
@@ -172,26 +184,15 @@ impl Contract {
             amount.into(),
             None,
             token_id.as_ref(),
-            NO_DEPOSIT,
+            1,
             GAS_FOR_FT_TRANSFER,
         );
     }
-
-    /// Given specific pool, returns amount of token_out recevied swapping amount_in of token_in.
-    pub fn get_return(
-        &self,
-        pool_id: u64,
-        token_in: ValidAccountId,
-        amount_in: U128,
-        token_out: ValidAccountId,
-    ) -> U128 {
-        let pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        pool.get_return(token_in, amount_in.into(), token_out)
-            .into()
-    }
 }
 
+#[near_bindgen]
 impl AccountRegistrar for Contract {
+    #[payable]
     fn ar_register(&mut self, account_id: Option<ValidAccountId>) -> bool {
         let amount = env::attached_deposit();
         let account_id = account_id
@@ -230,49 +231,9 @@ impl AccountRegistrar for Contract {
     }
 }
 
-#[near_bindgen]
-impl FungibleTokenReceiver for Contract {
-    /// Callback on receiving tokens by this contract.
-    /// Message structure:
-    ///  - deposit
-    ///  - swap:pool_id:token_out:min_amount_out
-    fn ft_on_transfer(&mut self, sender_id: ValidAccountId, amount: U128, msg: String) -> U128 {
-        let token_in = env::predecessor_account_id();
-        if msg == "deposit" {
-            self.internal_deposit(sender_id.as_ref(), &token_in, amount.into());
-        } else {
-            let pieces: Vec<&str> = msg.split(":").collect();
-            assert_eq!(pieces.len(), 4);
-            assert_eq!(pieces[0], "swap");
-            let pool_id = serde_json::from_str::<u64>(pieces[1]).expect("ERR_MSG_POOL_ID");
-            let token_out = pieces[2].to_string();
-            let min_amount_out = serde_json::from_str::<u128>(pieces[3]).expect("ERR_MSG_POOL_ID");
-            let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-            let amount_out = pool.swap(
-                sender_id.as_ref(),
-                &token_in,
-                amount.into(),
-                &token_out,
-                min_amount_out.into(),
-            );
-            self.pools.replace(pool_id, &pool);
-            env::log(
-                format!(
-                    "Swapped {} {} for {} {}",
-                    u128::from(amount),
-                    token_in,
-                    amount_out,
-                    token_out
-                )
-                .as_bytes(),
-            );
-        }
-        amount
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::test_utils::{accounts, VMContextBuilder};
     use near_sdk::{testing_env, MockedBlockchain};
 
@@ -300,34 +261,37 @@ mod tests {
             .build());
         contract.ar_register(None);
         testing_env!(context.predecessor_account_id(accounts(1)).build());
-        contract.ft_on_transfer(accounts(3), (5 * one_near).into(), "deposit".to_string());
+        contract.ft_on_transfer(accounts(3), (105 * one_near).into(), "".to_string());
         testing_env!(context.predecessor_account_id(accounts(2)).build());
-        contract.ft_on_transfer(accounts(3), (10 * one_near).into(), "deposit".to_string());
+        contract.ft_on_transfer(accounts(3), (110 * one_near).into(), "".to_string());
         testing_env!(context.predecessor_account_id(accounts(3)).build());
         assert_eq!(
             contract.get_deposit(accounts(3).as_ref(), accounts(1).as_ref()),
-            (5 * one_near).into()
+            (105 * one_near).into()
         );
         assert_eq!(
             contract.get_deposit(accounts(3).as_ref(), accounts(2).as_ref()),
-            (10 * one_near).into()
+            (110 * one_near).into()
         );
-        contract.add_liquidity(0);
+        contract.add_liquidity(0, vec![5 * one_near, 10 * one_near]);
         assert_eq!(
             contract.get_pool_total_shares(0),
-            U128(1000000000000000000000)
+            U128(1000000000000000000000000)
         );
 
         // Get price from pool #0 1 -> 2 tokens.
-        let price = contract.get_return(0, accounts(1), one_near.into(), accounts(2));
-        assert_eq!(price, 1662497915624478906119726.into());
+        let amount_out = contract.get_return(0, accounts(1), one_near.into(), accounts(2));
+        assert_eq!(amount_out, 1662497915624478906119726.into());
 
-        testing_env!(context.predecessor_account_id(accounts(1)).build());
-        // swap:pool_id:token_out:min_amount_out
-        contract.ft_on_transfer(
-            accounts(3),
-            one_near.into(),
-            format!("swap:{}:{}:{}", 0, accounts(2).as_ref(), 1),
+        let amount_out = contract.swap(0, accounts(1), one_near.into(), accounts(2), U128(1));
+        assert_eq!(amount_out, 1662497915624478906119726.into());
+        assert_eq!(
+            contract.get_deposit(accounts(3).as_ref(), accounts(1).as_ref()),
+            (99 * one_near).into()
+        );
+        assert_eq!(
+            contract.get_deposit(accounts(3).as_ref(), accounts(2).as_ref()),
+            (100 * one_near + amount_out.0).into()
         );
 
         testing_env!(context.predecessor_account_id(accounts(3)).build());
