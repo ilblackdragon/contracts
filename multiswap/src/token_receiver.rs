@@ -3,6 +3,10 @@ use near_sdk::PromiseOrValue;
 
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 
+// See [NEP-141](https://github.com/near/NEPs/blob/master/specs/Standards/Tokens/FungibleTokenCore.md)
+// "deposits" for this contract are initiated by calling the NEP-141 token contract `ft_transfer_call` with this contract as reference
+// e.g. token1.ft_transfer_call("multiswap.near', to_yocto("105"), None, "")
+
 #[near_bindgen]
 impl FungibleTokenReceiver for Contract {
     /// Callback on receiving tokens by this contract.
