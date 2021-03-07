@@ -20,7 +20,7 @@ impl Contract {
     pub fn new() -> Self {
         assert!(!env::state_exists(), "ERR_CONTRACT_IS_INITIALIZED");
         Self {
-            token: FungibleToken::new(b"t"),
+            token: FungibleToken::new(b"t".to_vec()),
         }
     }
 
@@ -37,7 +37,7 @@ impl Contract {
 }
 
 near_contract_standards::impl_fungible_token_core!(Contract, token);
-near_contract_standards::impl_fungible_token_ar!(Contract, token);
+near_contract_standards::impl_fungible_token_storage!(Contract, token);
 
 #[near_bindgen]
 impl FungibleTokenMetadataProvider for Contract {
@@ -61,14 +61,13 @@ mod tests {
         testing_env!(context
             .attached_deposit(125 * env::storage_byte_cost())
             .build());
-        contract.ar_register(Some(accounts(0)));
         contract.mint(accounts(0), 1_000_000.into());
         assert_eq!(contract.ft_balance_of(accounts(0)), 1_000_000.into());
 
         testing_env!(context
             .attached_deposit(125 * env::storage_byte_cost())
             .build());
-        contract.ar_register(Some(accounts(1)));
+        contract.storage_deposit(Some(accounts(1)), None);
         testing_env!(context
             .attached_deposit(1)
             .predecessor_account_id(accounts(0))

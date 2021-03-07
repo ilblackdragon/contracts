@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 
-use near_contract_standards::account_registration::AccountRegistrar;
+use near_contract_standards::storage_management::{
+    StorageBalance, StorageBalanceBounds, StorageManagement,
+};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, Vector};
 use near_sdk::json_types::{ValidAccountId, U128};
@@ -11,11 +13,12 @@ use near_sdk::{
 
 use crate::pool::Pool;
 use crate::simple_pool::SimplePool;
-use crate::utils::{ext_fungible_token, GAS_FOR_FT_TRANSFER};
+use crate::utils::{check_token_duplicates, ext_fungible_token, GAS_FOR_FT_TRANSFER};
 pub use crate::views::PoolInfo;
 
 mod pool;
 mod simple_pool;
+mod storage_impl;
 mod token_receiver;
 mod utils;
 mod views;
@@ -50,6 +53,7 @@ impl Contract {
     /// Attached NEAR should be enough to cover the added storage.
     #[payable]
     pub fn add_simple_pool(&mut self, tokens: Vec<ValidAccountId>, fee: u32) -> u32 {
+        check_token_duplicates(&tokens);
         self.internal_add_pool(Pool::SimplePool(SimplePool::new(
             self.pools.len() as u32,
             tokens,
@@ -211,47 +215,6 @@ impl Contract {
     }
 }
 
-#[near_bindgen]
-impl AccountRegistrar for Contract {
-    #[payable]
-    fn ar_register(&mut self, account_id: Option<ValidAccountId>) -> bool {
-        let amount = env::attached_deposit();
-        let account_id = account_id
-            .map(|a| a.into())
-            .unwrap_or_else(|| env::predecessor_account_id());
-        if self.deposited_amounts.contains_key(&account_id) {
-            log!("The account is already registered, refunding the deposit");
-            if amount > 0 {
-                Promise::new(account_id).transfer(amount);
-            }
-            return false;
-        }
-        let ar_registration_fee = self.ar_registration_fee().0;
-        if amount < ar_registration_fee {
-            env::panic(b"The attached deposit is less than the account registration fee");
-        }
-
-        self.internal_register_account(&account_id);
-        let refund = amount - ar_registration_fee;
-        if refund > 0 {
-            Promise::new(account_id).transfer(refund);
-        }
-        true
-    }
-
-    fn ar_is_registered(&self, account_id: ValidAccountId) -> bool {
-        self.deposited_amounts.contains_key(account_id.as_ref())
-    }
-
-    fn ar_unregister(&mut self, _force: Option<bool>) -> bool {
-        unimplemented!()
-    }
-
-    fn ar_registration_fee(&self) -> U128 {
-        (BYTES_PER_DEPOSIT_RECORD * env::storage_byte_cost()).into()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
@@ -278,9 +241,9 @@ mod tests {
         // add liquidity of (1,2) tokens and create 1st pool.
         testing_env!(context
             .predecessor_account_id(accounts(3))
-            .attached_deposit(contract.ar_registration_fee().into())
+            .attached_deposit(contract.storage_balance_bounds().min.0)
             .build());
-        contract.ar_register(None);
+        contract.storage_deposit(None, None);
         testing_env!(context
             .predecessor_account_id(accounts(1))
             .attached_deposit(1)
@@ -334,5 +297,15 @@ mod tests {
 
     /// Should deny creating a pool with duplicate tokens.
     #[test]
-    fn test_deny_duplicate_tokens_pool() {}
+    #[should_panic(expected = "ERR_TOKEN_DUPLICATES")]
+    fn test_deny_duplicate_tokens_pool() {
+        let mut context = VMContextBuilder::new();
+        testing_env!(context.build());
+        let mut contract = Contract::new();
+        testing_env!(context
+            .predecessor_account_id(accounts(3))
+            .attached_deposit(env::storage_byte_cost() * 300)
+            .build());
+        contract.add_simple_pool(vec![accounts(1), accounts(1)], 30);
+    }
 }

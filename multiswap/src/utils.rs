@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use near_sdk::collections::LookupMap;
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{ext_contract, AccountId, Balance, Gas};
 use uint::construct_uint;
 
@@ -20,4 +22,10 @@ pub trait FungibleToken {
 pub fn add_to_collection(c: &mut LookupMap<AccountId, Balance>, key: &String, value: Balance) {
     let prev_value = c.get(key).unwrap_or(0);
     c.insert(key, &(prev_value + value));
+}
+
+/// Checks if there are any duplicates in the given list of tokens.
+pub fn check_token_duplicates(tokens: &[ValidAccountId]) {
+    let token_set: HashSet<_> = tokens.iter().map(|a| AccountId::from(a.clone())).collect();
+    assert_eq!(token_set.len(), tokens.len(), "ERR_TOKEN_DUPLICATES");
 }

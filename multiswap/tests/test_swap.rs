@@ -64,16 +64,21 @@ fn test_swap() {
     )
     .assert_success();
 
-    call!(root, pool.ar_register(None), deposit = to_yocto("1")).assert_success();
     call!(
         root,
-        token1.ar_register(Some(to_va(swap()))),
+        pool.storage_deposit(None, None),
         deposit = to_yocto("1")
     )
     .assert_success();
     call!(
         root,
-        token2.ar_register(Some(to_va(swap()))),
+        token1.storage_deposit(Some(to_va(swap())), None),
+        deposit = to_yocto("1")
+    )
+    .assert_success();
+    call!(
+        root,
+        token2.storage_deposit(Some(to_va(swap())), None),
         deposit = to_yocto("1")
     )
     .assert_success();

@@ -18,10 +18,10 @@ panic = "abort"
 overflow-checks = true
 
 [dependencies]
-near-sdk = { git = "https://github.com/near/near-sdk-rs", rev = "0b3419cac5af87fb7e71136af2a40df7cb4a1ad5" }
-near-contract-standards = { git = "https://github.com/near/near-sdk-rs", rev = "0b3419cac5af87fb7e71136af2a40df7cb4a1ad5" }
+near-sdk = { git = "https://github.com/near/near-sdk-rs", rev = "76c4180dc68f01ab5527faa0dd9c6985d900060c" }
+near-contract-standards = { git = "https://github.com/near/near-sdk-rs", rev = "76c4180dc68f01ab5527faa0dd9c6985d900060c" }
 uint = { version = "0.9.0", default-features = false }
 
 [dev-dependencies]
-near-sdk-sim = { git = "https://github.com/near/near-sdk-rs", rev = "0b3419cac5af87fb7e71136af2a40df7cb4a1ad5" }
+near-sdk-sim = { git = "https://github.com/near/near-sdk-rs", rev = "76c4180dc68f01ab5527faa0dd9c6985d900060c" }
 test-token = { path = "../test-token" }
