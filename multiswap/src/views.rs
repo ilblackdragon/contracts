@@ -1,12 +1,12 @@
 //! View functions for the contract.
 
+use std::collections::HashMap;
+
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{near_bindgen, AccountId};
 
-use crate::pool::Pool;
 use crate::*;
-use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
@@ -23,11 +23,13 @@ pub struct PoolInfo {
 
 impl From<Pool> for PoolInfo {
     fn from(pool: Pool) -> Self {
-        Self {
-            token_account_ids: pool.token_account_ids,
-            amounts: pool.amounts.into_iter().map(|a| U128(a)).collect(),
-            fee: pool.fee,
-            shares_total_supply: U128(pool.shares_total_supply),
+        match pool {
+            Pool::SimplePool(pool) => Self {
+                token_account_ids: pool.token_account_ids,
+                amounts: pool.amounts.into_iter().map(|a| U128(a)).collect(),
+                fee: pool.fee,
+                shares_total_supply: U128(pool.shares_total_supply),
+            },
         }
     }
 }
@@ -91,7 +93,7 @@ impl Contract {
         token_out: ValidAccountId,
     ) -> U128 {
         let pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        pool.get_return(token_in, amount_in.into(), token_out)
+        pool.get_return(token_in.as_ref(), amount_in.into(), token_out.as_ref())
             .into()
     }
 }

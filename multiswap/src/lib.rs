@@ -9,10 +9,13 @@ use near_sdk::{
     assert_one_yocto, env, log, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
 };
 
-use crate::pool::{ext_fungible_token, Pool, GAS_FOR_FT_TRANSFER};
+use crate::pool::Pool;
+use crate::simple_pool::SimplePool;
+use crate::utils::{ext_fungible_token, GAS_FOR_FT_TRANSFER};
 pub use crate::views::PoolInfo;
 
 mod pool;
+mod simple_pool;
 mod token_receiver;
 mod utils;
 mod views;
@@ -43,52 +46,19 @@ impl Contract {
         }
     }
 
-    /// Adds new pool with given tokens and give fee.
+    /// Adds new "Simple Pool" with given tokens and given fee.
     /// Attached NEAR should be enough to cover the added storage.
     #[payable]
-    pub fn add_pool(&mut self, tokens: Vec<ValidAccountId>, fee: u32) -> u32 {
-        let prev_storage = env::storage_usage();
-        let id = self.pools.len() as u32;
-        self.pools.push(&Pool::new(id, tokens, fee));
-        assert!(
-            (env::storage_usage() - prev_storage) as u128 * env::storage_byte_cost()
-                <= env::attached_deposit(),
-            "ERR_STORAGE_DEPOSIT"
-        );
-        id
+    pub fn add_simple_pool(&mut self, tokens: Vec<ValidAccountId>, fee: u32) -> u32 {
+        self.internal_add_pool(Pool::SimplePool(SimplePool::new(
+            self.pools.len() as u32,
+            tokens,
+            fee,
+        )))
     }
 
-    fn internal_register_account(&mut self, account_id: &AccountId) {
-        self.deposited_amounts
-            .insert(&account_id, &HashMap::default());
-    }
-
-    /// Record deposit of some number of tokens to this contract.
-    fn internal_deposit(&mut self, sender_id: &AccountId, token_id: &AccountId, amount: Balance) {
-        let mut amounts = self
-            .deposited_amounts
-            .get(sender_id)
-            .expect("ERR_NOT_REGISTERED");
-        assert!(amounts.len() <= 10, "ERR_TOO_MANY_TOKENS");
-        amounts.insert(token_id.clone(), amount);
-        self.deposited_amounts.insert(sender_id, &amounts);
-    }
-
-    fn internal_get_deposits(&self, sender_id: &AccountId) -> HashMap<AccountId, Balance> {
-        self.deposited_amounts
-            .get(sender_id)
-            .expect("ERR_NO_DEPOSIT")
-            .clone()
-    }
-
-    /// Returns current balance of given token for given user. If there is nothing recorded, returns 0.
-    fn internal_get_deposit(&self, sender_id: &AccountId, token_id: &AccountId) -> Balance {
-        self.internal_get_deposits(sender_id)
-            .get(token_id)
-            .cloned()
-            .unwrap_or_default()
-    }
-
+    /// Swaps given amount_in of token_in into token_out via given pool.
+    /// Should be at least min_amount_out or swap will fail (prevents front running and other slippage issues).
     pub fn swap(
         &mut self,
         pool_id: u64,
@@ -190,6 +160,57 @@ impl Contract {
     }
 }
 
+/// Internal methods implementation.
+impl Contract {
+    /// Adds given pool to the list and returns it's id.
+    /// If there is not enough attached balance to cover storage, fails.
+    fn internal_add_pool(&mut self, pool: Pool) -> u32 {
+        let prev_storage = env::storage_usage();
+        let id = self.pools.len() as u32;
+        self.pools.push(&pool);
+        assert!(
+            (env::storage_usage() - prev_storage) as u128 * env::storage_byte_cost()
+                <= env::attached_deposit(),
+            "ERR_STORAGE_DEPOSIT"
+        );
+        id
+    }
+
+    /// Registers account in deposited amounts.
+    /// This should be used when it's known that storage is prepaid.
+    fn internal_register_account(&mut self, account_id: &AccountId) {
+        self.deposited_amounts
+            .insert(&account_id, &HashMap::default());
+    }
+
+    /// Record deposit of some number of tokens to this contract.
+    fn internal_deposit(&mut self, sender_id: &AccountId, token_id: &AccountId, amount: Balance) {
+        let mut amounts = self
+            .deposited_amounts
+            .get(sender_id)
+            .expect("ERR_NOT_REGISTERED");
+        assert!(amounts.len() <= 10, "ERR_TOO_MANY_TOKENS");
+        amounts.insert(token_id.clone(), amount);
+        self.deposited_amounts.insert(sender_id, &amounts);
+    }
+
+    /// Returns current balances across all tokens for given user.
+    fn internal_get_deposits(&self, sender_id: &AccountId) -> HashMap<AccountId, Balance> {
+        self.deposited_amounts
+            .get(sender_id)
+            .expect("ERR_NO_DEPOSIT")
+            .clone()
+    }
+
+    /// Returns current balance of given token for given user. If there is nothing recorded, returns 0.
+    fn internal_get_deposit(&self, sender_id: &AccountId, token_id: &AccountId) -> Balance {
+        self.internal_get_deposits(sender_id)
+            .get(token_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
 #[near_bindgen]
 impl AccountRegistrar for Contract {
     #[payable]
@@ -252,7 +273,7 @@ mod tests {
             .predecessor_account_id(accounts(3))
             .attached_deposit(env::storage_byte_cost() * 300)
             .build());
-        contract.add_pool(vec![accounts(1), accounts(2)], 3);
+        contract.add_simple_pool(vec![accounts(1), accounts(2)], 30);
 
         // add liquidity of (1,2) tokens and create 1st pool.
         testing_env!(context
@@ -260,7 +281,10 @@ mod tests {
             .attached_deposit(contract.ar_registration_fee().into())
             .build());
         contract.ar_register(None);
-        testing_env!(context.predecessor_account_id(accounts(1)).build());
+        testing_env!(context
+            .predecessor_account_id(accounts(1))
+            .attached_deposit(1)
+            .build());
         contract.ft_on_transfer(accounts(3), (105 * one_near).into(), "".to_string());
         testing_env!(context.predecessor_account_id(accounts(2)).build());
         contract.ft_on_transfer(accounts(3), (110 * one_near).into(), "".to_string());
@@ -273,7 +297,7 @@ mod tests {
             contract.get_deposit(accounts(3).as_ref(), accounts(2).as_ref()),
             (110 * one_near).into()
         );
-        contract.add_liquidity(0, vec![5 * one_near, 10 * one_near]);
+        contract.add_liquidity(0, vec![U128(5 * one_near), U128(10 * one_near)]);
         assert_eq!(
             contract.get_pool_total_shares(0),
             U128(1000000000000000000000000)

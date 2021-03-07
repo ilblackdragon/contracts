@@ -59,7 +59,7 @@ fn test_swap() {
     call!(root, pool.new());
     call!(
         root,
-        pool.add_pool(vec![to_va(dai()), to_va(eth())], 3),
+        pool.add_simple_pool(vec![to_va(dai()), to_va(eth())], 30),
         deposit = to_yocto("1")
     )
     .assert_success();
@@ -100,7 +100,7 @@ fn test_swap() {
         PoolInfo {
             token_account_ids: vec![dai(), eth()],
             amounts: vec![to_yocto("5").into(), to_yocto("10").into()],
-            fee: 3,
+            fee: 30,
             shares_total_supply: to_yocto("1").into(),
         }
     );

@@ -1,165 +1,62 @@
-use std::cmp::min;
-
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LookupMap;
-use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{env, ext_contract, AccountId, Balance, Gas};
+use near_sdk::{AccountId, Balance};
 
-use crate::utils::{add_to_collection, U256};
+use crate::simple_pool::SimplePool;
 
-const FEE_DIVISOR: u32 = 1_000;
-const MAX_NUM_TOKENS: usize = 10;
-const INIT_SHARES_SUPPLY: u128 = 1_000_000_000_000_000_000_000_000;
-
-pub const GAS_FOR_FT_TRANSFER: Gas = 10_000_000_000_000;
-
-#[ext_contract(ext_fungible_token)]
-pub trait FungibleToken {
-    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
-}
-
+/// Generic Pool, providing wrapper around different implementations of swap pools.
+/// Allows to add new types of pools just by adding extra item in the enum without needing to migrate the storage.
 #[derive(BorshSerialize, BorshDeserialize)]
-pub struct Pool {
-    /// List of tokens in the pool.
-    pub token_account_ids: Vec<AccountId>,
-    /// How much NEAR this contract has.
-    pub amounts: Vec<Balance>,
-    /// Fee charged for swap.
-    pub fee: u32,
-    /// Shares of the pool by liquidity providers.
-    pub shares: LookupMap<AccountId, Balance>,
-    /// Total number of shares.
-    pub shares_total_supply: Balance,
+pub enum Pool {
+    SimplePool(SimplePool),
 }
 
 impl Pool {
-    pub fn new(id: u32, token_account_ids: Vec<ValidAccountId>, fee: u32) -> Self {
-        assert!(fee < FEE_DIVISOR, "ERR_FEE_TOO_LARGE");
-        assert!(
-            token_account_ids.len() < MAX_NUM_TOKENS,
-            "ERR_TOO_MANY_TOKENS"
-        );
-        Self {
-            token_account_ids: token_account_ids.iter().map(|a| a.clone().into()).collect(),
-            amounts: vec![0u128; token_account_ids.len()],
-            fee,
-            shares: LookupMap::new(format!("s{}", id).into_bytes()),
-            shares_total_supply: 0,
-            // liquidity_amounts: LookupMap::new(format!("l{}", id).into_bytes()),
+    /// Returns pool kind.
+    pub fn kind(&self) -> String {
+        match self {
+            Pool::SimplePool(_) => "SIMPLE_POOL".to_string(),
         }
     }
 
-    pub fn share_balances(&self, account_id: &AccountId) -> Balance {
-        self.shares.get(account_id).unwrap_or_default()
-    }
-
-    pub fn share_total_balance(&self) -> Balance {
-        self.shares_total_supply
-    }
-
+    /// Returns which tokens are in the underlying pool.
     pub fn tokens(&self) -> &[AccountId] {
-        &self.token_account_ids
+        match self {
+            Pool::SimplePool(pool) => pool.tokens(),
+        }
     }
 
-    /// Adds token to liquidity pool.
+    /// Adds liquidity into underlying pool.
     pub fn add_liquidity(&mut self, sender_id: &AccountId, amounts: Vec<Balance>) -> Balance {
-        assert_eq!(
-            amounts.len(),
-            self.token_account_ids.len(),
-            "ERR_WRONG_TOKEN_COUNT"
-        );
-        let shares = if self.shares_total_supply > 0 {
-            let mut fair_supply = U256::max_value();
-            for i in 0..self.token_account_ids.len() {
-                assert!(amounts[i] > 0, "ERR_AMOUNT_ZERO");
-                fair_supply = min(
-                    fair_supply,
-                    U256::from(amounts[i]) * U256::from(self.shares_total_supply) / self.amounts[i],
-                );
-            }
-            for i in 0..self.token_account_ids.len() {
-                let amount = U256::from(self.amounts[i]) * fair_supply
-                    / U256::from(self.shares_total_supply);
-                self.amounts[i] += amount.as_u128();
-            }
-            fair_supply.as_u128()
-        } else {
-            for i in 0..self.token_account_ids.len() {
-                self.amounts[i] += amounts[i];
-            }
-            INIT_SHARES_SUPPLY
-        };
-        self.shares_total_supply += shares;
-        add_to_collection(&mut self.shares, &sender_id, shares);
-        shares
+        match self {
+            Pool::SimplePool(pool) => pool.add_liquidity(sender_id, amounts),
+        }
     }
 
-    /// Removes given number of shares from the pool and returns amounts to the parent.
+    /// Removes liquidity from underlying pool.
     pub fn remove_liquidity(
         &mut self,
         sender_id: &AccountId,
         shares: Balance,
         min_amounts: Vec<Balance>,
     ) -> Vec<Balance> {
-        let prev_shares_amount = self.shares.get(&sender_id).expect("ERR_NO_SHARES");
-        assert!(prev_shares_amount >= shares, "ERR_NOT_ENOUGH_SHARES");
-        let mut result = vec![];
-        for i in 0..self.token_account_ids.len() {
-            let amount = (U256::from(self.amounts[i]) * U256::from(shares)
-                / U256::from(self.shares_total_supply))
-            .as_u128();
-            assert!(amount >= min_amounts[i], "ERR_MIN_AMOUNT");
-            self.amounts[i] -= amount;
-            result.push(amount);
+        match self {
+            Pool::SimplePool(pool) => pool.remove_liquidity(sender_id, shares, min_amounts),
         }
-        if prev_shares_amount == shares {
-            self.shares.remove(&sender_id);
-        } else {
-            self.shares
-                .insert(&sender_id, &(prev_shares_amount - shares));
-        }
-        self.shares_total_supply -= shares;
-        result
     }
 
-    fn token_index(&self, token_id: &AccountId) -> usize {
-        self.token_account_ids
-            .iter()
-            .position(|id| id == token_id)
-            .expect("ERR_MISSING_TOKEN")
-    }
-
-    fn get_return_idx(&self, token_in: usize, amount_in: Balance, token_out: usize) -> Balance {
-        let in_balance = U256::from(self.amounts[token_in]);
-        let out_balance = U256::from(self.amounts[token_out]);
-        assert!(
-            in_balance > U256::zero()
-                && out_balance > U256::zero()
-                && token_in != token_out
-                && amount_in > 0,
-            "ERR_INVALID"
-        );
-        let amount_with_fee = U256::from(amount_in) * U256::from(FEE_DIVISOR - self.fee);
-        (amount_with_fee * out_balance / (U256::from(FEE_DIVISOR) * in_balance + amount_with_fee))
-            .as_u128()
-    }
-
-    /// Returns how much token you will receive if swap `token_amount_in` of `token_in` for `token_out`.
+    /// Returns how many tokens will one receive swapping given amount of token_in for token_out.
     pub fn get_return(
         &self,
-        token_in: ValidAccountId,
+        token_in: &AccountId,
         amount_in: Balance,
-        token_out: ValidAccountId,
+        token_out: &AccountId,
     ) -> Balance {
-        self.get_return_idx(
-            self.token_index(token_in.as_ref()),
-            amount_in,
-            self.token_index(token_out.as_ref()),
-        )
+        match self {
+            Pool::SimplePool(pool) => pool.get_return(token_in, amount_in, token_out),
+        }
     }
 
-    /// Swap `token_amount_in` of `token_in` token into `token_out` and return how much was received.
-    /// Assuming that `token_amount_in` was already received from `sender_id`.
+    /// Swaps given number of token_in for token_out and returns received amount.
     pub fn swap(
         &mut self,
         token_in: &AccountId,
@@ -167,42 +64,20 @@ impl Pool {
         token_out: &AccountId,
         min_amount_out: Balance,
     ) -> Balance {
-        let in_idx = self.token_index(token_in);
-        let out_idx = self.token_index(token_out);
-        let amount_out = self.get_return_idx(in_idx, amount_in, out_idx);
-        env::log(
-            format!(
-                "Swapped {} {} for {} {}",
-                amount_in, token_in, amount_out, token_out
-            )
-            .as_bytes(),
-        );
-        assert!(amount_out >= min_amount_out, "ERR_MIN_AMOUNT");
-
-        self.amounts[in_idx] += amount_in;
-        self.amounts[out_idx] -= amount_out;
-
-        amount_out
+        match self {
+            Pool::SimplePool(pool) => pool.swap(token_in, amount_in, token_out, min_amount_out),
+        }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use near_sdk::test_utils::{accounts, VMContextBuilder};
-    use near_sdk::{testing_env, MockedBlockchain};
+    pub fn share_total_balance(&self) -> Balance {
+        match self {
+            Pool::SimplePool(pool) => pool.share_total_balance(),
+        }
+    }
 
-    use super::*;
-
-    #[test]
-    fn test_pool_swap() {
-        let one_near = 10u128.pow(24);
-        let mut context = VMContextBuilder::new();
-        context.predecessor_account_id(accounts(0));
-        testing_env!(context.build());
-        let mut pool = Pool::new(0, vec![accounts(1), accounts(2)], 3);
-        let num_shares =
-            pool.add_liquidity(accounts(0).as_ref(), vec![5 * one_near, 10 * one_near]);
-        pool.swap(accounts(1).as_ref(), one_near, accounts(2).as_ref(), 1);
-        pool.remove_liquidity(accounts(0).as_ref(), num_shares, vec![1, 1]);
+    pub fn share_balances(&self, account_id: &AccountId) -> Balance {
+        match self {
+            Pool::SimplePool(pool) => pool.share_balances(account_id),
+        }
     }
 }
