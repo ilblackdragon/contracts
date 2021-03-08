@@ -4,7 +4,7 @@ use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::AccountId;
 use near_sdk_sim::{call, deploy, init_simulator, to_yocto, view, ContractAccount, UserAccount};
 
-use multiswap::{ContractContract as Multiswap, PoolInfo};
+use multiswap::{ContractContract as Multiswap, PoolInfo, SwapAction};
 use std::collections::HashMap;
 use test_token::ContractContract as TestToken;
 
@@ -116,7 +116,13 @@ fn test_swap() {
 
     call!(
         root,
-        pool.swap(0, to_va(dai()), U128(to_yocto("1")), to_va(eth()), U128(1))
+        pool.swap(vec![SwapAction {
+            pool_id: 0,
+            token_in: to_va(dai()),
+            amount_in: Some(U128(to_yocto("1"))),
+            token_out: to_va(eth()),
+            min_amount_out: U128(1)
+        }])
     )
     .assert_success();
 

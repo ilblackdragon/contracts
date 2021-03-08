@@ -7,6 +7,7 @@ use near_contract_standards::storage_management::{
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, Vector};
 use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
     assert_one_yocto, env, log, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
 };
@@ -29,6 +30,24 @@ const MAX_ACCOUNT_LENGTH: u128 = 64;
 const MAX_NUMBER_OF_TOKENS: u128 = 10;
 const BYTES_PER_DEPOSIT_RECORD: u128 =
     MAX_NUMBER_OF_TOKENS * (MAX_ACCOUNT_LENGTH + 16) + 4 + MAX_ACCOUNT_LENGTH;
+
+/// Single swap action.
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct SwapAction {
+    /// Pool which should be used for swapping.
+    pub pool_id: u64,
+    /// Token to swap from.
+    pub token_in: ValidAccountId,
+    /// Amount to exchange.
+    /// If amount_in is None, it will take amount_out from previous step.
+    /// Will fail if amount_in is None on the first step.
+    pub amount_in: Option<U128>,
+    /// Token to swap into.
+    pub token_out: ValidAccountId,
+    /// Required minimum amount of token_out.
+    pub min_amount_out: U128,
+}
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
@@ -63,15 +82,15 @@ impl Contract {
 
     /// Swaps given amount_in of token_in into token_out via given pool.
     /// Should be at least min_amount_out or swap will fail (prevents front running and other slippage issues).
-    pub fn swap(
+    pub fn internal_swap(
         &mut self,
+        sender_id: &AccountId,
         pool_id: u64,
         token_in: ValidAccountId,
         amount_in: U128,
         token_out: ValidAccountId,
         min_amount_out: U128,
     ) -> U128 {
-        let sender_id = env::predecessor_account_id();
         let prev_amount_in = self.internal_get_deposit(&sender_id, token_in.as_ref());
         let prev_amount_out = self.internal_get_deposit(&sender_id, token_out.as_ref());
         let amount_in: u128 = amount_in.into();
@@ -87,6 +106,25 @@ impl Contract {
         self.internal_deposit(&sender_id, token_out.as_ref(), prev_amount_out + amount_out);
         self.pools.replace(pool_id, &pool);
         amount_out.into()
+    }
+
+    pub fn swap(&mut self, actions: Vec<SwapAction>) -> U128 {
+        let sender_id = env::predecessor_account_id();
+        let mut prev_amount = None;
+        for action in actions {
+            let amount_in = action
+                .amount_in
+                .unwrap_or_else(|| prev_amount.expect("ERR_FIRST_SWAP_MISSING_AMOUNT"));
+            prev_amount = Some(self.internal_swap(
+                &sender_id,
+                action.pool_id,
+                action.token_in,
+                amount_in,
+                action.token_out,
+                action.min_amount_out,
+            ));
+        }
+        prev_amount.unwrap()
     }
 
     /// Add liquidity from already deposited amounts to given pool.
@@ -270,7 +308,13 @@ mod tests {
         let amount_out = contract.get_return(0, accounts(1), one_near.into(), accounts(2));
         assert_eq!(amount_out, 1662497915624478906119726.into());
 
-        let amount_out = contract.swap(0, accounts(1), one_near.into(), accounts(2), U128(1));
+        let amount_out = contract.swap(vec![SwapAction {
+            pool_id: 0,
+            token_in: accounts(1),
+            amount_in: Some(one_near.into()),
+            token_out: accounts(2),
+            min_amount_out: U128(1),
+        }]);
         assert_eq!(amount_out, 1662497915624478906119726.into());
         assert_eq!(
             contract.get_deposit(accounts(3).as_ref(), accounts(1).as_ref()),
